@@ -43,7 +43,7 @@ struct _SkippyM3U8
   gboolean endlist;             /* if ENDLIST has been reached */
   gint version;                 /* last EXT-X-VERSION */
   GstClockTime targetduration;  /* last EXT-X-TARGETDURATION */
-  gchar *allowcache;            /* last EXT-X-ALLOWCACHE */
+  gboolean allowcache;          /* last EXT-X-ALLOWCACHE */
   gchar *key;
 
   gint bandwidth;
@@ -67,8 +67,10 @@ struct _SkippyM3U8MediaFile
   GstClockTime duration;
   gchar *uri;
   guint sequence;               /* the sequence nb of this file */
+  gboolean discont;             /* this file marks a discontinuity */
   gchar *key;
   guint8 iv[16];
+  gint64 offset, size;
 };
 
 struct _SkippyM3U8Client
@@ -77,6 +79,7 @@ struct _SkippyM3U8Client
   SkippyM3U8 *current;
   guint update_failed_count;
   gint sequence;                /* the next sequence for this client */
+  GstClockTime sequence_position; /* position of this sequence */
   GMutex lock;
 };
 
@@ -87,9 +90,9 @@ gboolean skippy_m3u8_client_update (SkippyM3U8Client * client, gchar * data);
 void skippy_m3u8_client_set_current (SkippyM3U8Client * client, SkippyM3U8 * m3u8);
 gboolean skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
     gboolean * discontinuity, const gchar ** uri, GstClockTime * duration,
-    GstClockTime * timestamp, const gchar ** key, const guint8 ** iv);
-void skippy_m3u8_client_get_current_position (SkippyM3U8Client * client,
-    GstClockTime * timestamp);
+    GstClockTime * timestamp, gint64 * range_start, gint64 * range_end,
+    const gchar ** key, const guint8 ** iv);
+void skippy_m3u8_client_advance_fragment (SkippyM3U8Client * client);
 GstClockTime skippy_m3u8_client_get_duration (SkippyM3U8Client * client);
 GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);
 const gchar *skippy_m3u8_client_get_uri(SkippyM3U8Client * client);
@@ -98,5 +101,7 @@ gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client);
 GList * skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client,
     guint bitrate);
+
+guint64 skippy_m3u8_client_get_current_fragment_duration (SkippyM3U8Client * client);
 
 G_END_DECLS

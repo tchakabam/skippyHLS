@@ -38,7 +38,7 @@ struct _SkippyUriDownloaderPrivate
   GstBus *bus;
   GstPad *pad;
   GTimeVal *timeout;
-  GstFragment *download;
+  SkippyFragment *download;
   gboolean got_buffer;
   GMutex download_lock;         /* used to restrict to one download only */
 
@@ -68,7 +68,7 @@ static GstStaticPadTemplate sinkpadtemplate = GST_STATIC_PAD_TEMPLATE ("sink",
   GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader"); \
 }
 
-G_DEFINE_TYPE_WITH_CODE (SkippyUriDownloader, gst_uri_downloader, GST_TYPE_OBJECT,
+G_DEFINE_TYPE_WITH_CODE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_OBJECT,
     _do_init);
 
 static void
@@ -268,7 +268,7 @@ skippy_uri_downloader_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   GST_LOG_OBJECT (downloader, "The uri fetcher received a new buffer "
       "of size %" G_GSIZE_FORMAT, gst_buffer_get_size (buf));
   downloader->priv->got_buffer = TRUE;
-  if (!gst_fragment_add_buffer (downloader->priv->download, buf))
+  if (!skippy_fragment_add_buffer (downloader->priv->download, buf))
     GST_WARNING_OBJECT (downloader, "Could not add buffer to fragment");
   GST_OBJECT_UNLOCK (downloader);
 
@@ -425,7 +425,7 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
   return TRUE;
 }
 
-GstFragment *
+SkippyFragment *
 skippy_uri_downloader_fetch_uri (SkippyUriDownloader * downloader,
     const gchar * uri, const gchar * referer, gboolean compress,
     gboolean refresh, gboolean allow_cache, GError ** err)
@@ -441,16 +441,16 @@ skippy_uri_downloader_fetch_uri (SkippyUriDownloader * downloader,
  * @range_start: the starting byte index
  * @range_end: the final byte index, use -1 for unspecified
  *
- * Returns the downloaded #GstFragment
+ * Returns the downloaded #SkippyFragment
  */
-GstFragment *
+SkippyFragment *
 skippy_uri_downloader_fetch_uri_with_range (SkippyUriDownloader *
     downloader, const gchar * uri, const gchar * referer, gboolean compress,
     gboolean refresh, gboolean allow_cache,
     gint64 range_start, gint64 range_end, GError ** err)
 {
   GstStateChangeReturn ret;
-  GstFragment *download = NULL;
+  SkippyFragment *download = NULL;
 
   GST_DEBUG_OBJECT (downloader, "Fetching URI %s", uri);
 
@@ -471,7 +471,7 @@ skippy_uri_downloader_fetch_uri_with_range (SkippyUriDownloader *
   }
 
   gst_bus_set_flushing (downloader->priv->bus, FALSE);
-  downloader->priv->download = gst_fragment_new ();
+  downloader->priv->download = skippy_fragment_new ();
   GST_OBJECT_UNLOCK (downloader);
   ret = gst_element_set_state (downloader->priv->urisrc, GST_STATE_READY);
   GST_OBJECT_LOCK (downloader);

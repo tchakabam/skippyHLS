@@ -530,9 +530,9 @@ skippy_m3u8_update (SkippyM3U8 * self, gchar * data, gboolean * updated)
     gchar *top_variant_uri = NULL;
 
     if (!self->current_variant)
-      top_variant_uri = GST_M3U8 (self->lists->data)->uri;
+      top_variant_uri = SKIPPY_M3U8 (self->lists->data)->uri;
     else
-      top_variant_uri = GST_M3U8 (self->current_variant->data)->uri;
+      top_variant_uri = SKIPPY_M3U8 (self->current_variant->data)->uri;
 
     self->lists =
         g_list_sort (self->lists,
@@ -579,12 +579,12 @@ skippy_m3u8_client_set_current (SkippyM3U8Client * self, SkippyM3U8 * m3u8)
 {
   g_return_if_fail (self != NULL);
 
-  GST_M3U8_CLIENT_LOCK (self);
+  SKIPPY_M3U8_CLIENT_LOCK (self);
   if (m3u8 != self->current) {
     self->current = m3u8;
     self->update_failed_count = 0;
   }
-  GST_M3U8_CLIENT_UNLOCK (self);
+  SKIPPY_M3U8_CLIENT_UNLOCK (self);
 }
 
 gboolean
@@ -596,7 +596,7 @@ skippy_m3u8_client_update (SkippyM3U8Client * self, gchar * data)
 
   g_return_val_if_fail (self != NULL, FALSE);
 
-  GST_M3U8_CLIENT_LOCK (self);
+  SKIPPY_M3U8_CLIENT_LOCK (self);
   m3u8 = self->current ? self->current : self->main;
 
   if (!skippy_m3u8_update (m3u8, data, &updated))
@@ -623,14 +623,14 @@ skippy_m3u8_client_update (SkippyM3U8Client * self, gchar * data)
 
   if (m3u8->files && self->sequence == -1) {
     self->sequence =
-        GST_M3U8_MEDIA_FILE (g_list_first (m3u8->files)->data)->sequence;
+        SKIPPY_M3U8_MEDIA_FILE (g_list_first (m3u8->files)->data)->sequence;
     self->sequence_position = 0;
     GST_DEBUG ("Setting first sequence at %d", self->sequence);
   }
 
   ret = TRUE;
 out:
-  GST_M3U8_CLIENT_UNLOCK (self);
+  SKIPPY_M3U8_CLIENT_UNLOCK (self);
   return ret;
 }
 
@@ -661,16 +661,16 @@ skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
   g_return_val_if_fail (client != NULL, FALSE);
   g_return_val_if_fail (client->current != NULL, FALSE);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   GST_DEBUG ("Looking for fragment %d", client->sequence);
   l = g_list_find_custom (client->current->files, client,
       (GCompareFunc) _find_next);
   if (l == NULL) {
-    GST_M3U8_CLIENT_UNLOCK (client);
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
     return FALSE;
   }
 
-  file = GST_M3U8_MEDIA_FILE (l->data);
+  file = SKIPPY_M3U8_MEDIA_FILE (l->data);
   GST_DEBUG ("Got fragment with sequence %u (client sequence %u)",
       file->sequence, client->sequence);
 
@@ -692,7 +692,7 @@ skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
   if (iv)
     *iv = file->iv;
 
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return TRUE;
 }
 
@@ -705,21 +705,21 @@ skippy_m3u8_client_advance_fragment (SkippyM3U8Client * client)
   g_return_if_fail (client != NULL);
   g_return_if_fail (client->current != NULL);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   GST_DEBUG ("Looking for fragment %d", client->sequence);
   l = g_list_find_custom (client->current->files, client,
       (GCompareFunc) _find_next);
   if (l == NULL) {
     GST_ERROR ("Could not find current fragment");
-    GST_M3U8_CLIENT_UNLOCK (client);
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
     return;
   }
 
-  file = GST_M3U8_MEDIA_FILE (l->data);
+  file = SKIPPY_M3U8_MEDIA_FILE (l->data);
   GST_DEBUG ("Advancing from sequence %u", file->sequence);
   client->sequence = file->sequence + 1;
   client->sequence_position += file->duration;
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
 }
 
 static void
@@ -735,15 +735,15 @@ skippy_m3u8_client_get_duration (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, GST_CLOCK_TIME_NONE);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   /* We can only get the duration for on-demand streams */
   if (!client->current || !client->current->endlist) {
-    GST_M3U8_CLIENT_UNLOCK (client);
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
     return GST_CLOCK_TIME_NONE;
   }
   if (client->current->files)
     g_list_foreach (client->current->files, (GFunc) _sum_duration, &duration);
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return duration;
 }
 
@@ -754,9 +754,9 @@ skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, GST_CLOCK_TIME_NONE);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   duration = client->current->targetduration;
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return duration;
 }
 
@@ -767,9 +767,9 @@ skippy_m3u8_client_get_uri (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, NULL);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   uri = client->main->uri;
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return uri;
 }
 
@@ -780,9 +780,9 @@ skippy_m3u8_client_get_current_uri (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, NULL);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   uri = client->current->uri;
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return uri;
 }
 
@@ -793,9 +793,9 @@ skippy_m3u8_client_has_variant_playlist (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, FALSE);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   ret = (client->main->lists != NULL);
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return ret;
 }
 
@@ -806,12 +806,12 @@ skippy_m3u8_client_is_live (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, FALSE);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   if (!client->current || client->current->endlist)
     ret = FALSE;
   else
     ret = TRUE;
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return ret;
 }
 
@@ -820,24 +820,24 @@ skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bi
 {
   GList *list, *current_variant;
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
   current_variant = client->main->current_variant;
 
   /*  Go to the highest possible bandwidth allowed */
-  while (GST_M3U8 (current_variant->data)->bandwidth <= bitrate) {
+  while (SKIPPY_M3U8 (current_variant->data)->bandwidth <= bitrate) {
     list = g_list_next (current_variant);
     if (!list)
       break;
     current_variant = list;
   }
 
-  while (GST_M3U8 (current_variant->data)->bandwidth > bitrate) {
+  while (SKIPPY_M3U8 (current_variant->data)->bandwidth > bitrate) {
     list = g_list_previous (current_variant);
     if (!list)
       break;
     current_variant = list;
   }
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
 
   return current_variant;
 }
@@ -906,16 +906,16 @@ skippy_m3u8_client_get_current_fragment_duration (SkippyM3U8Client * client)
 
   g_return_val_if_fail (client != NULL, 0);
 
-  GST_M3U8_CLIENT_LOCK (client);
+  SKIPPY_M3U8_CLIENT_LOCK (client);
 
   list = g_list_find_custom (client->current->files, client,
       (GCompareFunc) _find_current);
   if (list == NULL) {
     dur = -1;
   } else {
-    dur = GST_M3U8_MEDIA_FILE (list->data)->duration;
+    dur = SKIPPY_M3U8_MEDIA_FILE (list->data)->duration;
   }
 
-  GST_M3U8_CLIENT_UNLOCK (client);
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return dur;
 }

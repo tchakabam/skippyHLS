@@ -56,8 +56,8 @@ struct _SkippyUriDownloaderClass
 GType skippy_uri_downloader_get_type (void);
 
 SkippyUriDownloader * skippy_uri_downloader_new (void);
-SkippyFragment * skippy_uri_downloader_fetch_uri (SkippyUriDownloader * downloader, const gchar * uri);
-SkippyFragment * skippy_uri_downloader_fetch_uri_with_range (SkippyUriDownloader * downloader, const gchar * uri, gint64 range_start, gint64 range_end);
+SkippyFragment * skippy_uri_downloader_fetch_uri (SkippyUriDownloader * downloader, const gchar * uri, const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
+SkippyFragment * skippy_uri_downloader_fetch_uri_with_range (SkippyUriDownloader * downloader, const gchar * uri, const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, gint64 range_start, gint64 range_end, GError ** err);
 void skippy_uri_downloader_reset (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_cancel (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_free (SkippyUriDownloader *downloader);
