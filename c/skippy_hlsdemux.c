@@ -82,7 +82,7 @@ enum
 };
 
 #define DEFAULT_FRAGMENTS_CACHE 1
-#define DEFAULT_FAILED_COUNT 3
+#define DEFAULT_FAILED_COUNT -1
 #define DEFAULT_BITRATE_LIMIT 0.8
 #define DEFAULT_CONNECTION_SPEED    0
 
@@ -826,7 +826,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       }
     } else {
       demux->download_failed_count++;
-      if (demux->download_failed_count <= DEFAULT_FAILED_COUNT) {
+      if (DEFAULT_FAILED_COUNT < 0 || demux->client->update_failed_count <= DEFAULT_FAILED_COUNT) {
         GST_WARNING_OBJECT (demux, "Could not fetch the next fragment");
         g_clear_error (&err);
 
@@ -1096,7 +1096,7 @@ skippy_hls_demux_updates_loop (SkippyHLSDemux * demux)
       if (demux->stop_updates_task)
         goto quit;
       demux->client->update_failed_count++;
-      if (demux->client->update_failed_count <= DEFAULT_FAILED_COUNT) {
+      if (DEFAULT_FAILED_COUNT < 0 || demux->client->update_failed_count <= DEFAULT_FAILED_COUNT) {
         GST_WARNING_OBJECT (demux, "Could not update the playlist");
         demux->next_update =
             g_get_monotonic_time () +
@@ -1575,6 +1575,7 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
 
 error:
   {
+    skippy_uri_downloader_reset (demux->downloader);
     return NULL;
   }
 }
