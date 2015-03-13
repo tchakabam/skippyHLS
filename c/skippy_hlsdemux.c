@@ -74,17 +74,14 @@ GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 enum
 {
   PROP_0,
-
-  PROP_FRAGMENTS_CACHE,
   PROP_BITRATE_LIMIT,
   PROP_CONNECTION_SPEED,
   PROP_LAST
 };
 
-#define DEFAULT_FRAGMENTS_CACHE 1
 #define DEFAULT_FAILED_COUNT -1
 #define DEFAULT_BITRATE_LIMIT 0.8
-#define DEFAULT_CONNECTION_SPEED    0
+#define DEFAULT_CONNECTION_SPEED 0
 
 /* GObject */
 static void skippy_hls_demux_set_property (GObject * object, guint prop_id,
@@ -171,13 +168,6 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
   gobject_class->get_property = skippy_hls_demux_get_property;
   gobject_class->dispose = skippy_hls_demux_dispose;
 
-  g_object_class_install_property (gobject_class, PROP_FRAGMENTS_CACHE,
-      g_param_spec_uint ("fragments-cache", "Fragments cache",
-          "Number of fragments needed to be cached to start playing "
-          "(DEPRECATED: Has no effect since 1.3.1)",
-          1, G_MAXUINT, DEFAULT_FRAGMENTS_CACHE,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
   g_object_class_install_property (gobject_class, PROP_BITRATE_LIMIT,
       g_param_spec_float ("bitrate-limit",
           "Bitrate limit in %",
@@ -258,8 +248,6 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (object);
 
   switch (prop_id) {
-    case PROP_FRAGMENTS_CACHE:
-      break;
     case PROP_BITRATE_LIMIT:
       demux->bitrate_limit = g_value_get_float (value);
       break;
@@ -279,9 +267,6 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (object);
 
   switch (prop_id) {
-    case PROP_FRAGMENTS_CACHE:
-      g_value_set_uint (value, 1);
-      break;
     case PROP_BITRATE_LIMIT:
       g_value_set_float (value, demux->bitrate_limit);
       break;
