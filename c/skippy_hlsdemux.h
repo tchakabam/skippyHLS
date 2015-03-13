@@ -70,7 +70,7 @@ struct _SkippyHLSDemux
   gboolean do_typefind;         /* Whether we need to typefind the next buffer */
 
   /* Properties */
-  guint fragments_cache;        /* number of fragments needed to be cached to start playing */
+  gint64 buffer_ahead_duration_secs;
   gfloat bitrate_limit;         /* limit of the available bitrate to use */
   guint connection_speed;       /* Network connection speed in kbps (0 = unknown) */
 

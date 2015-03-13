@@ -74,6 +74,7 @@ GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 enum
 {
   PROP_0,
+  PROP_BUFFER_AHEAD_DURATION,
   PROP_BITRATE_LIMIT,
   PROP_CONNECTION_SPEED,
   PROP_LAST
@@ -82,6 +83,7 @@ enum
 #define DEFAULT_FAILED_COUNT -1
 #define DEFAULT_BITRATE_LIMIT 0.8
 #define DEFAULT_CONNECTION_SPEED 0
+#define DEFAULT_BUFFER_AHEAD_DURATION 30
 
 /* GObject */
 static void skippy_hls_demux_set_property (GObject * object, guint prop_id,
@@ -168,6 +170,13 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
   gobject_class->get_property = skippy_hls_demux_get_property;
   gobject_class->dispose = skippy_hls_demux_dispose;
 
+  g_object_class_install_property (gobject_class, PROP_BUFFER_AHEAD_DURATION,
+      g_param_spec_float ("buffer-ahead-duration",
+          "Buffer duration ahead of playback in seconds",
+          "Determines maximum of media segments downloaded upfront.",
+          0, G_MAXFLOAT, DEFAULT_BUFFER_AHEAD_DURATION,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
   g_object_class_install_property (gobject_class, PROP_BITRATE_LIMIT,
       g_param_spec_float ("bitrate-limit",
           "Bitrate limit in %",
@@ -219,6 +228,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   /* Properties */
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
   demux->connection_speed = DEFAULT_CONNECTION_SPEED;
+  demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
 
   g_mutex_init (&demux->download_lock);
   g_cond_init (&demux->download_cond);
@@ -248,6 +258,9 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (object);
 
   switch (prop_id) {
+    case PROP_BUFFER_AHEAD_DURATION:
+      demux->buffer_ahead_duration_secs = g_value_get_float (value);
+      break;
     case PROP_BITRATE_LIMIT:
       demux->bitrate_limit = g_value_get_float (value);
       break;
@@ -267,6 +280,9 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (object);
 
   switch (prop_id) {
+    case PROP_BUFFER_AHEAD_DURATION:
+      g_value_set_float (value, demux->buffer_ahead_duration_secs);
+      break;
     case PROP_BITRATE_LIMIT:
       g_value_set_float (value, demux->bitrate_limit);
       break;
@@ -315,6 +331,8 @@ skippy_hls_demux_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
   SkippyHLSDemux *demux;
 
   demux = SKIPPY_HLS_DEMUX (parent);
+
+  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
 
   switch (event->type) {
     case GST_EVENT_SEEK:
@@ -435,6 +453,8 @@ skippy_hls_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
   GstStructure *stat_msg;
 
   demux = SKIPPY_HLS_DEMUX (parent);
+
+  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
 
   switch (event->type) {
     case GST_EVENT_EOS:{
@@ -745,6 +765,34 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GstFlowReturn ret;
   gboolean end_of_playlist;
   GError *err = NULL;
+  GstFormat format;
+  gint64 pos;
+  GstQuery* query;
+  gboolean query_ret;
+
+  // Check upfront position relative to stream position
+  query = gst_query_new_position (GST_FORMAT_TIME);
+  query_ret = gst_pad_peer_query (demux->srcpad, query);
+  if (query_ret) {
+    gst_query_parse_position (query, &format, &pos);
+    if (format != GST_FORMAT_TIME) {
+      GST_ERROR ("Position query result is not in TIME format");
+      query_ret = FALSE;
+    }
+    GST_LOG ("Current position query result: %lld ms", (long long int) pos / 1000000);
+  }
+  gst_query_unref (query);
+  if (!query_ret) {
+    GST_WARNING ("Position query did not give proper result!");
+    // We assume this can happen at the very beginning of the streaming session
+    // when pipeline position has some undefined state (as observed)
+    pos = 0;
+  }
+  if (demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
+    GST_LOG ("Blocking task as we have buffered enough until now (%f seconds)", ((float) demux->segment.position) / GST_SECOND);
+    sleep (1);
+    return;
+  }
 
   /* This task will download fragments as fast as possible, sends
    * SEGMENT and CAPS events and switches pads if necessary.
