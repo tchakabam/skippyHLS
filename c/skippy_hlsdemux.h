@@ -70,7 +70,7 @@ struct _SkippyHLSDemux
   gboolean do_typefind;         /* Whether we need to typefind the next buffer */
 
   /* Properties */
-  gint64 buffer_ahead_duration_secs;
+  guint buffer_ahead_duration_secs;
   gfloat bitrate_limit;         /* limit of the available bitrate to use */
   guint connection_speed;       /* Network connection speed in kbps (0 = unknown) */
 
@@ -96,6 +96,7 @@ struct _SkippyHLSDemux
   GstSegment segment;
   gboolean need_segment;
   gboolean discont;
+  gboolean seeked;
 
   /* Cache for the last key */
   gchar *key_url;

@@ -171,10 +171,10 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
   gobject_class->dispose = skippy_hls_demux_dispose;
 
   g_object_class_install_property (gobject_class, PROP_BUFFER_AHEAD_DURATION,
-      g_param_spec_float ("buffer-ahead-duration",
+      g_param_spec_uint ("buffer-ahead-duration",
           "Buffer duration ahead of playback in seconds",
           "Determines maximum of media segments downloaded upfront.",
-          0, G_MAXFLOAT, DEFAULT_BUFFER_AHEAD_DURATION,
+          1, G_MAXUINT, DEFAULT_BUFFER_AHEAD_DURATION,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_BITRATE_LIMIT,
@@ -259,7 +259,7 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_BUFFER_AHEAD_DURATION:
-      demux->buffer_ahead_duration_secs = g_value_get_float (value);
+      demux->buffer_ahead_duration_secs = g_value_get_uint (value);
       break;
     case PROP_BITRATE_LIMIT:
       demux->bitrate_limit = g_value_get_float (value);
@@ -281,7 +281,7 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
 
   switch (prop_id) {
     case PROP_BUFFER_AHEAD_DURATION:
-      g_value_set_float (value, demux->buffer_ahead_duration_secs);
+      g_value_set_uint (value, demux->buffer_ahead_duration_secs);
       break;
     case PROP_BITRATE_LIMIT:
       g_value_set_float (value, demux->bitrate_limit);
@@ -412,6 +412,7 @@ skippy_hls_demux_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
       gst_segment_do_seek (&demux->segment, rate, format, flags, start_type,
           start, stop_type, stop, NULL);
       demux->need_segment = TRUE;
+      demux->seeked = TRUE;
 
       if (flags & GST_SEEK_FLAG_FLUSH) {
         GST_DEBUG_OBJECT (demux, "sending flush stop");
@@ -788,9 +789,9 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // when pipeline position has some undefined state (as observed)
     pos = 0;
   }
-  if (demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
-    GST_LOG ("Blocking task as we have buffered enough until now (%f seconds)", ((float) demux->segment.position) / GST_SECOND);
-    sleep (1);
+  if (!demux->seeked && demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
+    GST_LOG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)", ((float) demux->segment.position) / GST_SECOND);
+    g_usleep (1000000);
     return;
   }
 
@@ -931,6 +932,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)));
 
   demux->segment.position = GST_BUFFER_TIMESTAMP (buf);
+  demux->seeked = FALSE;
   if (demux->segment.rate > 0)
     demux->segment.position += GST_BUFFER_DURATION (buf);
 
@@ -1027,6 +1029,7 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
   demux->need_segment = TRUE;
   demux->discont = TRUE;
+  demux->seeked = FALSE;
 
   demux->have_group_id = FALSE;
   demux->group_id = G_MAXUINT;
