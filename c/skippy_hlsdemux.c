@@ -862,28 +862,30 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       }
     } else {
       demux->download_failed_count++;
-      if (DEFAULT_FAILED_COUNT < 0 || demux->client->update_failed_count <= DEFAULT_FAILED_COUNT) {
-        GST_WARNING_OBJECT (demux, "Could not fetch the next fragment");
-        g_clear_error (&err);
+      if (DEFAULT_FAILED_COUNT < 0 || demux->download_failed_count <= DEFAULT_FAILED_COUNT) {
+        GST_DEBUG ("Failed to fetch fragment for %d times.", demux->download_failed_count);
 
         /* First try to update the playlist for non-live playlists
          * in case the URIs have changed in the meantime. But only
          * try it the first time, after that we're going to wait a
          * a bit to not flood the server */
-        if (demux->download_failed_count == 1
+        // We only want to refetch the playlist if we get a 403 or a 404
+        if ((g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)
+            || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND))
             && !skippy_m3u8_client_is_live (demux->client)
             && skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
           /* Retry immediately, the playlist actually has changed */
-          GST_DEBUG_OBJECT (demux, "Updated the playlist");
+          GST_DEBUG_OBJECT (demux, "Updated the playlist because of 403 or 404");
           return;
         } else {
+          GST_ELEMENT_ERROR_FROM_ERROR (demux, "Could not fetch next fragment",
+              err);
           /* Wait half the fragment duration before retrying */
           demux->next_download +=
               gst_util_uint64_scale
               (skippy_m3u8_client_get_current_fragment_duration (demux->client),
               G_USEC_PER_SEC, 2 * GST_SECOND);
         }
-
         g_clear_error (&err);
 
         g_mutex_lock (&demux->download_lock);
