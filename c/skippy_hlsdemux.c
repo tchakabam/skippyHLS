@@ -260,6 +260,7 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
   switch (prop_id) {
     case PROP_BUFFER_AHEAD_DURATION:
       demux->buffer_ahead_duration_secs = g_value_get_uint (value);
+      GST_DEBUG ("Set buffer ahead duration to %u seconds", demux->buffer_ahead_duration_secs);
       break;
     case PROP_BITRATE_LIMIT:
       demux->bitrate_limit = g_value_get_float (value);
@@ -790,8 +791,10 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       // when pipeline position has some undefined state (as observed)
       pos = 0;
     }
+    GST_DEBUG ("Buffer ahead duration is %d seconds", (int) demux->buffer_ahead_duration_secs);
     if (!demux->seeked && demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
-      GST_LOG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)", ((float) demux->segment.position) / GST_SECOND);
+      GST_LOG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)",
+        ((float) demux->segment.position) / GST_SECOND);
       g_usleep (1000000);
       return;
     }
@@ -824,6 +827,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   if ((fragment =
           skippy_hls_demux_get_next_fragment (demux, &end_of_playlist,
               &err)) == NULL) {
+
     if (demux->stop_stream_task) {
       g_clear_error (&err);
       goto pause_task;
@@ -872,21 +876,27 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
         // We only want to refetch the playlist if we get a 403 or a 404
         if ((g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)
             || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND))
-            && !skippy_m3u8_client_is_live (demux->client)
-            && skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
+            && !skippy_m3u8_client_is_live (demux->client)) {
+          g_clear_error (&err);
+          if (skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
+            // Success means err == NULL
+            return;
+          }
           /* Retry immediately, the playlist actually has changed */
           GST_DEBUG_OBJECT (demux, "Updated the playlist because of 403 or 404");
-          return;
-        } else {
-          GST_ELEMENT_ERROR_FROM_ERROR (demux, "Could not fetch next fragment",
-              err);
-          /* Wait half the fragment duration before retrying */
-          demux->next_download +=
-              gst_util_uint64_scale
-              (skippy_m3u8_client_get_current_fragment_duration (demux->client),
-              G_USEC_PER_SEC, 2 * GST_SECOND);
         }
-        g_clear_error (&err);
+
+        // Silently ignore any other error
+        if (err) {
+          g_clear_error (&err);
+        }
+
+        /* Wait half the fragment duration before retrying */
+        demux->next_download +=
+            gst_util_uint64_scale
+            (skippy_m3u8_client_get_current_fragment_duration (demux->client),
+            G_USEC_PER_SEC, 2 * GST_SECOND);
+
 
         g_mutex_lock (&demux->download_lock);
         if (demux->stop_stream_task) {
@@ -1629,3 +1639,4 @@ void skippy_hlsdemux_setup (void)
   gst_element_register (NULL, "skippyhlsdemux", GST_RANK_PRIMARY + 100,
       TYPE_SKIPPY_HLS_DEMUX);
 }
+
