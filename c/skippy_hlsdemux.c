@@ -85,6 +85,7 @@ enum
 #define DEFAULT_BITRATE_LIMIT 0.8
 #define DEFAULT_CONNECTION_SPEED 0
 #define DEFAULT_BUFFER_AHEAD_DURATION 30
+#define DEFAULT_CACHING_ENABLED TRUE
 
 /* GObject */
 static void skippy_hls_demux_set_property (GObject * object, guint prop_id,
@@ -235,7 +236,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
   demux->connection_speed = DEFAULT_CONNECTION_SPEED;
   demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
-  demux->caching_enabled = TRUE;
+  demux->caching_enabled = DEFAULT_CACHING_ENABLED;
 
   g_mutex_init (&demux->download_lock);
   g_cond_init (&demux->download_cond);
