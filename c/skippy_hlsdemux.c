@@ -192,7 +192,7 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_CACHING_ENABLED,
-   	  g_param_spec_boolean ("caching_enabled", "Caching enabled",
+   	  g_param_spec_boolean ("caching-enabled", "Caching enabled",
   		  "Enable or disable response caching.",
   		  TRUE, G_PARAM_READWRITE));
 
