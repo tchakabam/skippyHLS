@@ -77,6 +77,7 @@ enum
   PROP_BUFFER_AHEAD_DURATION,
   PROP_BITRATE_LIMIT,
   PROP_CONNECTION_SPEED,
+  PROP_CACHING_ENABLED,
   PROP_LAST
 };
 
@@ -190,6 +191,11 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
           0, G_MAXUINT / 1000, DEFAULT_CONNECTION_SPEED,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
+  g_object_class_install_property (gobject_class, PROP_CACHING_ENABLED,
+   	  g_param_spec_boolean ("caching_enabled", "Caching enabled",
+  		  "Enable or disable response caching.",
+  		  TRUE, G_PARAM_READWRITE));
+
   element_class->change_state = GST_DEBUG_FUNCPTR (skippy_hls_demux_change_state);
 
   gst_element_class_add_pad_template (element_class,
@@ -229,6 +235,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
   demux->connection_speed = DEFAULT_CONNECTION_SPEED;
   demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
+  demux->caching_enabled = TRUE;
 
   g_mutex_init (&demux->download_lock);
   g_cond_init (&demux->download_cond);
@@ -268,6 +275,9 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
     case PROP_CONNECTION_SPEED:
       demux->connection_speed = g_value_get_uint (value) * 1000;
       break;
+    case PROP_CACHING_ENABLED:
+      demux->caching_enabled = g_value_get_boolean (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -289,6 +299,9 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_CONNECTION_SPEED:
       g_value_set_uint (value, demux->connection_speed / 1000);
+      break;
+    case PROP_CACHING_ENABLED:
+      g_value_set_boolean (value, demux->caching_enabled);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1224,7 +1237,7 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux, gboolean update,
 
   download =
       skippy_uri_downloader_fetch_uri (demux->downloader, uri,
-      demux->client->main ? demux->client->main->uri : NULL, TRUE, TRUE, TRUE,
+      demux->client->main ? demux->client->main->uri : NULL, TRUE, TRUE, demux->caching_enabled,
       err);
   if (download == NULL)
     return FALSE;
@@ -1444,6 +1457,7 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
   GstBuffer *key_buffer, *encrypted_buffer, *decrypted_buffer;
   GstMapInfo key_info, encrypted_info, decrypted_info;
   gsize unpadded_size;
+  gboolean allow_cache = demux->caching_enabled;
 
   if (demux->key_url && strcmp (demux->key_url, key) == 0) {
     key_fragment = g_object_ref (demux->key_fragment);
@@ -1459,7 +1473,7 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
     key_fragment =
         skippy_uri_downloader_fetch_uri (demux->downloader, key,
         demux->client->main ? demux->client->main->uri : NULL, FALSE, FALSE,
-        demux->client->current ? demux->client->current->allowcache : TRUE,
+        demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache,
         err);
     if (key_fragment == NULL)
       goto key_failed;
@@ -1538,8 +1552,9 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
   GstStructure *stat_msg;
   GstBuffer *buffer;
   guint64 size;
-
   *end_of_playlist = FALSE;
+  gboolean allow_cache = demux->caching_enabled;
+
   if (!skippy_m3u8_client_get_next_fragment (demux->client, &discont,
           &next_fragment_uri, &duration, &timestamp, &range_start, &range_end,
           &key, &iv)) {
@@ -1556,7 +1571,7 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
       skippy_uri_downloader_fetch_uri_with_range (demux->downloader,
       next_fragment_uri, demux->client->main ? demux->client->main->uri : NULL,
       FALSE, FALSE,
-      demux->client->current ? demux->client->current->allowcache : TRUE,
+      demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache,
       range_start, range_end, err);
 
   if (download == NULL)
