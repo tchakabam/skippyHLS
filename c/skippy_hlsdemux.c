@@ -554,7 +554,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
           ret = TRUE;
         }
       }
-      GST_INFO_OBJECT (hlsdemux, "GST_QUERY_DURATION returns %s with duration %"
+      GST_TRACE_OBJECT (hlsdemux, "GST_QUERY_DURATION returns %s with duration %"
           GST_TIME_FORMAT, ret ? "TRUE" : "FALSE", GST_TIME_ARGS (duration));
       break;
     }
@@ -875,7 +875,10 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
          * a bit to not flood the server */
         // We only want to refetch the playlist if we get a 403 or a 404
         if ((g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)
-            || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND))
+            // FIXME: This error comes also on connection failures. We'd want to differentiate between a 404 and a connection failure.
+            //        We will
+            // || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND)
+            )
             && !skippy_m3u8_client_is_live (demux->client)) {
           g_clear_error (&err);
           if (skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
@@ -897,7 +900,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
             (skippy_m3u8_client_get_current_fragment_duration (demux->client),
             G_USEC_PER_SEC, 2 * GST_SECOND);
 
-
         g_mutex_lock (&demux->download_lock);
         if (demux->stop_stream_task) {
           g_mutex_unlock (&demux->download_lock);
@@ -908,11 +910,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
         g_mutex_unlock (&demux->download_lock);
         GST_DEBUG_OBJECT (demux, "Retrying now");
 
-        /* Refetch the playlist now after we waited */
-        if (!skippy_m3u8_client_is_live (demux->client)
-            && skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
-          GST_DEBUG_OBJECT (demux, "Updated the playlist");
-        }
         return;
       } else {
         GST_ELEMENT_ERROR_FROM_ERROR (demux, "Could not fetch next fragment",
