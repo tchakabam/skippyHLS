@@ -19,25 +19,18 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#include <string.h>
+
 #include <glib.h>
 #include <gst/base/gsttypefindhelper.h>
 #include <gst/base/gstadapter.h>
 
-#include "skippy_fragment.h"
+#include <skippyhls/skippy_fragment.h>
 
 #define SKIPPY_FRAGMENT_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), TYPE_SKIPPY_FRAGMENT, SkippyFragmentPrivate))
 
-enum
-{
-  PROP_0,
-  PROP_INDEX,
-  PROP_NAME,
-  PROP_DURATION,
-  PROP_DISCONTINOUS,
-  PROP_BUFFER,
-  PROP_CAPS,
-  PROP_LAST
-};
+GST_DEBUG_CATEGORY_STATIC (skippy_fragment_debug);
+#define GST_CAT_DEFAULT skippy_fragment_debug
 
 struct _SkippyFragmentPrivate
 {
@@ -52,101 +45,17 @@ static void skippy_fragment_dispose (GObject * object);
 static void skippy_fragment_finalize (GObject * object);
 
 static void
-skippy_fragment_set_property (GObject * object,
-    guint property_id, const GValue * value, GParamSpec * pspec)
-{
-  SkippyFragment *fragment = SKIPPY_FRAGMENT (object);
-
-  switch (property_id) {
-    case PROP_CAPS:
-      skippy_fragment_set_caps (fragment, g_value_get_boxed (value));
-      break;
-
-    default:
-      /* We don't have any other property... */
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-      break;
-  }
-}
-
-static void
-skippy_fragment_get_property (GObject * object,
-    guint property_id, GValue * value, GParamSpec * pspec)
-{
-  SkippyFragment *fragment = SKIPPY_FRAGMENT (object);
-
-  switch (property_id) {
-    case PROP_INDEX:
-      g_value_set_uint (value, fragment->index);
-      break;
-
-    case PROP_NAME:
-      g_value_set_string (value, fragment->name);
-      break;
-
-    case PROP_DURATION:
-      g_value_set_uint64 (value, fragment->stop_time - fragment->start_time);
-      break;
-
-    case PROP_DISCONTINOUS:
-      g_value_set_boolean (value, fragment->discontinuous);
-      break;
-
-    case PROP_BUFFER:
-      g_value_set_boxed (value, skippy_fragment_get_buffer (fragment));
-      break;
-
-    case PROP_CAPS:
-      g_value_set_boxed (value, skippy_fragment_get_caps (fragment));
-      break;
-
-    default:
-      /* We don't have any other property... */
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, property_id, pspec);
-      break;
-  }
-}
-
-
-
-static void
 skippy_fragment_class_init (SkippyFragmentClass * klass)
 {
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
 
   g_type_class_add_private (klass, sizeof (SkippyFragmentPrivate));
 
-  gobject_class->set_property = skippy_fragment_set_property;
-  gobject_class->get_property = skippy_fragment_get_property;
   gobject_class->dispose = skippy_fragment_dispose;
   gobject_class->finalize = skippy_fragment_finalize;
 
-  g_object_class_install_property (gobject_class, PROP_INDEX,
-      g_param_spec_uint ("index", "Index", "Index of the fragment", 0,
-          G_MAXUINT, 0, G_PARAM_READABLE));
-
-  g_object_class_install_property (gobject_class, PROP_NAME,
-      g_param_spec_string ("name", "Name",
-          "Name of the fragment (eg:fragment-12.ts)", NULL, G_PARAM_READABLE));
-
-  g_object_class_install_property (gobject_class, PROP_DISCONTINOUS,
-      g_param_spec_boolean ("discontinuous", "Discontinous",
-          "Whether this fragment has a discontinuity or not",
-          FALSE, G_PARAM_READABLE));
-
-  g_object_class_install_property (gobject_class, PROP_DURATION,
-      g_param_spec_uint64 ("duration", "Fragment duration",
-          "Duration of the fragment", 0, G_MAXUINT64, 0, G_PARAM_READABLE));
-
-  g_object_class_install_property (gobject_class, PROP_BUFFER,
-      g_param_spec_boxed ("buffer", "Buffer",
-          "The fragment's buffer", GST_TYPE_BUFFER,
-          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_class, PROP_CAPS,
-      g_param_spec_boxed ("caps", "Fragment caps",
-          "The caps of the fragment's buffer. (NULL = detect)", GST_TYPE_CAPS,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  GST_DEBUG_CATEGORY_INIT (skippy_fragment_debug, "skippyfragment", 0,
+      "HLS fragment");
 }
 
 static void
@@ -158,19 +67,34 @@ skippy_fragment_init (SkippyFragment * fragment)
 
   g_mutex_init (&fragment->priv->lock);
   priv->buffer = NULL;
+
   fragment->download_start_time = gst_util_get_timestamp ();
   fragment->start_time = 0;
   fragment->stop_time = 0;
+  fragment->duration = 0;
   fragment->index = 0;
-  fragment->name = g_strdup ("");
+  fragment->range_start = 0;
+  fragment->range_end = -1;
   fragment->completed = FALSE;
+  fragment->cancelled = FALSE;
   fragment->discontinuous = FALSE;
 }
 
 SkippyFragment *
-skippy_fragment_new (void)
+skippy_fragment_new (const gchar* uri, gchar* key_uri, guint8* iv)
 {
-  return SKIPPY_FRAGMENT (g_object_new (TYPE_SKIPPY_FRAGMENT, NULL));
+  SkippyFragment* fragment;
+
+  g_return_val_if_fail (uri, NULL);
+  g_return_val_if_fail (!key_uri || key_uri && iv, NULL);
+
+  fragment = SKIPPY_FRAGMENT (g_object_new (TYPE_SKIPPY_FRAGMENT, NULL));
+  fragment->uri = g_strdup (uri);
+  if (key_uri) {
+    fragment->key_uri = g_strdup (key_uri);
+    memcpy (fragment->iv, iv, sizeof (fragment->iv));
+  }
+  return fragment;
 }
 
 static void
@@ -178,7 +102,14 @@ skippy_fragment_finalize (GObject * gobject)
 {
   SkippyFragment *fragment = SKIPPY_FRAGMENT (gobject);
 
-  g_free (fragment->name);
+  if (fragment->uri) {
+    g_free (fragment->uri);
+  }
+
+  if (fragment->key_uri) {
+    g_free (fragment->key_uri);
+  }
+
   g_mutex_clear (&fragment->priv->lock);
 
   G_OBJECT_CLASS (skippy_fragment_parent_class)->finalize (gobject);
@@ -231,8 +162,12 @@ skippy_fragment_get_caps (SkippyFragment * fragment)
 {
   g_return_val_if_fail (fragment != NULL, NULL);
 
-  if (!fragment->completed)
+  if (!fragment->completed) {
+    GST_WARNING ("Can't get caps of incomplete fragment");
     return NULL;
+  }
+
+  GST_DEBUG ("Getting fragment caps ...");
 
   g_mutex_lock (&fragment->priv->lock);
   if (fragment->priv->caps == NULL) {
@@ -262,8 +197,11 @@ skippy_fragment_add_buffer (SkippyFragment * fragment, GstBuffer * buffer)
   g_return_val_if_fail (fragment != NULL, FALSE);
   g_return_val_if_fail (buffer != NULL, FALSE);
 
+  g_mutex_lock (&fragment->priv->lock);
+
   if (fragment->completed) {
     GST_WARNING ("Fragment is completed, could not add more buffers");
+    g_mutex_unlock (&fragment->priv->lock);
     return FALSE;
   }
 
@@ -273,5 +211,7 @@ skippy_fragment_add_buffer (SkippyFragment * fragment, GstBuffer * buffer)
     fragment->priv->buffer = buffer;
   else
     fragment->priv->buffer = gst_buffer_append (fragment->priv->buffer, buffer);
+
+  g_mutex_unlock (&fragment->priv->lock);
   return TRUE;
 }

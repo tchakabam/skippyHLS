@@ -24,6 +24,8 @@
 
 #include <gst/gst.h>
 
+#include "skippy_fragment.h"
+
 G_BEGIN_DECLS
 
 typedef struct _SkippyM3U8 SkippyM3U8;
@@ -88,10 +90,10 @@ SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri);
 void skippy_m3u8_client_free (SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_update (SkippyM3U8Client * client, gchar * data);
 void skippy_m3u8_client_set_current (SkippyM3U8Client * client, SkippyM3U8 * m3u8);
-gboolean skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
-    gboolean * discontinuity, const gchar ** uri, GstClockTime * duration,
-    GstClockTime * timestamp, gint64 * range_start, gint64 * range_end,
-    const gchar ** key, const guint8 ** iv);
+
+// Called by SkippyHLSDemux to get the next fragment
+SkippyFragment* skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client);
+
 void skippy_m3u8_client_advance_fragment (SkippyM3U8Client * client);
 GstClockTime skippy_m3u8_client_get_duration (SkippyM3U8Client * client);
 GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);

@@ -19,7 +19,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
- #include "skippy_m3u8.h"
+ #include "skippyhls/skippy_m3u8.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -649,14 +649,12 @@ _find_next (SkippyM3U8MediaFile * file, SkippyM3U8Client * client)
   return TRUE;
 }
 
-gboolean
-skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
-    gboolean * discontinuity, const gchar ** uri, GstClockTime * duration,
-    GstClockTime * timestamp, gint64 * range_start, gint64 * range_end,
-    const gchar ** key, const guint8 ** iv)
+SkippyFragment*
+skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client)
 {
   GList *l;
   SkippyM3U8MediaFile *file;
+  SkippyFragment* fragment;
 
   g_return_val_if_fail (client != NULL, FALSE);
   g_return_val_if_fail (client->current != NULL, FALSE);
@@ -667,33 +665,23 @@ skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
       (GCompareFunc) _find_next);
   if (l == NULL) {
     SKIPPY_M3U8_CLIENT_UNLOCK (client);
-    return FALSE;
+    return NULL;
   }
 
   file = SKIPPY_M3U8_MEDIA_FILE (l->data);
   GST_DEBUG ("Got fragment with sequence %u (client sequence %u)",
       file->sequence, client->sequence);
 
-  if (timestamp)
-    *timestamp = client->sequence_position;
-
-  if (discontinuity)
-    *discontinuity = client->sequence != file->sequence || file->discont;
-  if (uri)
-    *uri = file->uri;
-  if (duration)
-    *duration = file->duration;
-  if (range_start)
-    *range_start = file->offset;
-  if (range_end)
-    *range_end = file->size != -1 ? file->offset + file->size - 1 : -1;
-  if (key)
-    *key = file->key;
-  if (iv)
-    *iv = file->iv;
+  fragment = skippy_fragment_new (file->uri, file->key, file->iv);
+  fragment->start_time = client->sequence_position;
+  fragment->stop_time = client->sequence_position + file->duration;
+  fragment->duration = file->duration;
+  fragment->discontinuous = client->sequence != file->sequence || file->discont;
+  fragment->range_start = file->offset;
+  fragment->range_end = file->size != -1 ? file->offset + file->size - 1 : -1;
 
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
-  return TRUE;
+  return fragment;
 }
 
 void

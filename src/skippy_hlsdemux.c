@@ -46,7 +46,7 @@
 #include <nettle/aes.h>
 #include <nettle/cbc.h>
 
-#include "skippy_hlsdemux.h"
+#include <skippyhls/skippy_hlsdemux.h>
 
 #define GST_ELEMENT_ERROR_FROM_ERROR(el, msg, err) G_STMT_START {       \
   gchar *__dbg = g_strdup (err->message);                               \
@@ -217,6 +217,21 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
 }
 
 static void
+downloader_callback (SkippyUriDownloader* downloader,
+  guint64 start_time, guint64 stop_time,
+  gsize bytes_loaded, gsize bytes_total)
+{
+  float percentage = 100.0f * bytes_loaded / bytes_total;
+  GST_DEBUG ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
+    (long int) bytes_loaded,
+    (long int) bytes_total,
+    percentage,
+    ((float) (start_time)) / GST_SECOND,
+    ((float) (stop_time)) / GST_SECOND
+  );
+}
+
+static void
 skippy_hls_demux_init (SkippyHLSDemux * demux)
 {
   /* sink pad */
@@ -228,7 +243,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   gst_element_add_pad (GST_ELEMENT (demux), demux->sinkpad);
 
   /* Downloader */
-  demux->downloader = skippy_uri_downloader_new ();
+  demux->downloader = skippy_uri_downloader_new (downloader_callback);
 
   demux->do_typefind = TRUE;
 
@@ -842,6 +857,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
           skippy_hls_demux_get_next_fragment (demux, &end_of_playlist,
               &err)) == NULL) {
 
+    GST_DEBUG ("Got NULL as next fragment");
+
     if (demux->stop_stream_task) {
       g_clear_error (&err);
       goto pause_task;
@@ -865,8 +882,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
           }
 
           /* Got a new fragment or not live anymore? */
-          if (skippy_m3u8_client_get_next_fragment (demux->client, NULL, NULL,
-                  NULL, NULL, NULL, NULL, NULL, NULL)
+          if (skippy_m3u8_client_get_next_fragment (demux->client)
               || !skippy_m3u8_client_is_live (demux->client))
             break;
 
@@ -932,6 +948,9 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       }
     }
   } else {
+
+    GST_DEBUG ("Got next fragment");
+
     demux->download_failed_count = 0;
     skippy_m3u8_client_advance_fragment (demux->client);
 
@@ -1231,14 +1250,16 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux, gboolean update,
   gboolean updated = FALSE;
   GstStructure *stat_msg;
 
-  const gchar *uri = skippy_m3u8_client_get_current_uri (demux->client);
+  download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client), NULL, NULL);
 
-  download =
-      skippy_uri_downloader_fetch_uri (demux->downloader, uri,
-      demux->client->main ? demux->client->main->uri : NULL, TRUE, TRUE, demux->caching_enabled,
-      err);
-  if (download == NULL)
-    return FALSE;
+  skippy_uri_downloader_fetch_fragment (demux->downloader,
+    download, // Media fragment to load
+    demux->client->main ? demux->client->main->uri : NULL, // Referrer
+    TRUE, // Compress (good for playlists)
+    TRUE, // Refresh (wipe out cached stuff)
+    demux->client->current ? demux->client->current->allowcache && demux->caching_enabled : demux->caching_enabled, // Allow caching directive
+    err // Error
+  );
 
   stat_msg = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "time-to-playlist", GST_TYPE_CLOCK_TIME,
@@ -1429,7 +1450,7 @@ skippy_hls_demux_switch_playlist (SkippyHLSDemux * demux, SkippyFragment * fragm
 }
 
 static gboolean
-decrypt_fragment (SkippyHLSDemux * demux, gsize length,
+decrypt_buffer (SkippyHLSDemux * demux, gsize length,
     const guint8 * encrypted_data, guint8 * decrypted_data,
     const guint8 * key_data, const guint8 * iv_data)
 {
@@ -1446,11 +1467,13 @@ decrypt_fragment (SkippyHLSDemux * demux, gsize length,
   return TRUE;
 }
 
-static SkippyFragment *
+static SkippyFragment*
 skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
-    SkippyFragment * encrypted_fragment, const gchar * key, const guint8 * iv,
+    SkippyFragment * encrypted_fragment,
     GError ** err)
 {
+  const gchar* key = encrypted_fragment->key_uri;
+  const guint8* iv = encrypted_fragment->iv;
   SkippyFragment *key_fragment, *ret = NULL;
   GstBuffer *key_buffer, *encrypted_buffer, *decrypted_buffer;
   GstMapInfo key_info, encrypted_info, decrypted_info;
@@ -1468,12 +1491,16 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
     demux->key_fragment = NULL;
 
     GST_INFO_OBJECT (demux, "Fetching key %s", key);
-    key_fragment =
-        skippy_uri_downloader_fetch_uri (demux->downloader, key,
-        demux->client->main ? demux->client->main->uri : NULL, FALSE, FALSE,
-        demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache,
-        err);
-    if (key_fragment == NULL)
+    key_fragment = skippy_fragment_new (key, NULL, NULL);
+    skippy_uri_downloader_fetch_fragment (demux->downloader,
+      key_fragment,
+      demux->client->main ? demux->client->main->uri : NULL,
+      FALSE,
+      FALSE,
+      demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache,
+      err
+    );
+    if (!key_fragment->completed)
       goto key_failed;
     demux->key_url = g_strdup (key);
     demux->key_fragment = g_object_ref (key_fragment);
@@ -1491,7 +1518,7 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
 
   if (key_info.size != 16)
     goto decrypt_error;
-  if (!decrypt_fragment (demux, encrypted_info.size,
+  if (!decrypt_buffer (demux, encrypted_info.size,
           encrypted_info.data, decrypted_info.data, key_info.data, iv))
     goto decrypt_error;
 
@@ -1509,9 +1536,10 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
   gst_buffer_unref (encrypted_buffer);
   g_object_unref (key_fragment);
 
-  ret = skippy_fragment_new ();
+  ret = skippy_fragment_new (encrypted_fragment->uri, NULL, NULL);
   skippy_fragment_add_buffer (ret, decrypted_buffer);
   ret->completed = TRUE;
+
 key_failed:
   g_object_unref (encrypted_fragment);
   return ret;
@@ -1538,24 +1566,15 @@ static SkippyFragment *
 skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
     gboolean * end_of_playlist, GError ** err)
 {
-  SkippyFragment *download;
-  const gchar *next_fragment_uri;
-  GstClockTime duration;
-  GstClockTime timestamp;
   GstBuffer *buf;
-  gboolean discont;
-  gint64 range_start, range_end;
-  const gchar *key = NULL;
-  const guint8 *iv = NULL;
   GstStructure *stat_msg;
   GstBuffer *buffer;
   guint64 size;
   *end_of_playlist = FALSE;
   gboolean allow_cache = demux->caching_enabled;
 
-  if (!skippy_m3u8_client_get_next_fragment (demux->client, &discont,
-          &next_fragment_uri, &duration, &timestamp, &range_start, &range_end,
-          &key, &iv)) {
+  SkippyFragment* fragment = skippy_m3u8_client_get_next_fragment (demux->client);
+  if (!fragment) {
     GST_INFO_OBJECT (demux, "This playlist doesn't contain more fragments");
     *end_of_playlist = TRUE;
     return NULL;
@@ -1563,52 +1582,60 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
 
   GST_INFO_OBJECT (demux,
       "Fetching next fragment %s (range=%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT
-      ")", next_fragment_uri, range_start, range_end);
+      ")", fragment->uri, fragment->range_start, fragment->range_end);
 
-  download =
-      skippy_uri_downloader_fetch_uri_with_range (demux->downloader,
-      next_fragment_uri, demux->client->main ? demux->client->main->uri : NULL,
-      FALSE, FALSE,
-      demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache,
-      range_start, range_end, err);
+  skippy_uri_downloader_fetch_fragment (demux->downloader,
+    fragment, // Media fragment to load
+    demux->client->main ? demux->client->main->uri : NULL, // Referrer
+    FALSE, // Compress (useless with coded media data)
+    FALSE, // Refresh (don't wipe out cache)
+    demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache, // Allow caching directive
+    err // Error
+  );
 
-  if (download == NULL)
+  if (!fragment->completed) {
     goto error;
+  }
 
-  buffer = skippy_fragment_get_buffer (download);
+  buffer = skippy_fragment_get_buffer (fragment);
   size = gst_buffer_get_size (buffer);
   gst_buffer_unref (buffer);
 
   stat_msg = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "time-to-download-fragment", GST_TYPE_CLOCK_TIME,
-      download->download_stop_time - download->download_start_time,
+      fragment->download_stop_time - fragment->download_start_time,
       "fragment-size", G_TYPE_UINT64, size, NULL);
   skippy_hls_demux_post_stat_msg (demux, stat_msg);
 
-  if (key) {
-    download = skippy_hls_demux_decrypt_fragment (demux, download, key, iv, err);
-    if (download == NULL)
+  if (fragment->key_uri) {
+    fragment = skippy_hls_demux_decrypt_fragment (demux, fragment, err);
+    if (fragment == NULL)
       goto error;
   }
 
-  buf = skippy_fragment_get_buffer (download);
+  buf = skippy_fragment_get_buffer (fragment);
 
-  GST_DEBUG_OBJECT (demux, "set fragment pts=%" GST_TIME_FORMAT " duration=%"
-      GST_TIME_FORMAT, GST_TIME_ARGS (timestamp), GST_TIME_ARGS (duration));
+  GST_DEBUG_OBJECT (demux, "Set fragment pts=%" GST_TIME_FORMAT " duration=%"
+      GST_TIME_FORMAT, GST_TIME_ARGS (fragment->start_time), GST_TIME_ARGS (fragment->duration));
 
-  GST_BUFFER_DURATION (buf) = duration;
-  GST_BUFFER_PTS (buf) = timestamp;
+  GST_BUFFER_DURATION (buf) = fragment->duration;
+  GST_BUFFER_PTS (buf) = fragment->start_time;
   GST_BUFFER_DTS (buf) = GST_CLOCK_TIME_NONE;
 
   /* We actually need to do this every time we switch bitrate */
   if (G_UNLIKELY (demux->do_typefind)) {
-    GstCaps *caps = skippy_fragment_get_caps (download);
+
+    GST_DEBUG ("Doing typefind");
+
+    GstCaps *caps = skippy_fragment_get_caps (fragment);
+
+    GST_DEBUG_OBJECT (demux, "Fragment caps: %" GST_PTR_FORMAT, caps);
 
     if (G_UNLIKELY (!caps)) {
       GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND,
           ("Could not determine type of stream"), (NULL));
       gst_buffer_unref (buf);
-      g_object_unref (download);
+      g_object_unref (fragment);
       goto error;
     }
 
@@ -1621,20 +1648,22 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
     }
     gst_caps_unref (caps);
   } else {
-    skippy_fragment_set_caps (download, demux->input_caps);
+    skippy_fragment_set_caps (fragment, demux->input_caps);
   }
 
-  if (discont) {
+  if (fragment->discontinuous) {
     GST_DEBUG_OBJECT (demux, "Marking fragment as discontinuous");
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
   } else {
     GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
   }
 
+  GST_DEBUG ("Returning fragment");
+
   /* The buffer ref is still kept inside the fragment download */
   gst_buffer_unref (buf);
 
-  return download;
+  return fragment;
 
 error:
   {
