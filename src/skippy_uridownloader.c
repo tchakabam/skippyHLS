@@ -40,13 +40,11 @@ struct _SkippyUriDownloaderPrivate
   GTimeVal *timeout;
   SkippyFragment *download;
   gboolean got_buffer;
-  GMutex download_lock;         /* used to restrict to one download only */
 
   GError *err;
 
   GCond cond;
   gboolean fetching;
-  gboolean cancelled;
 
   SkippyUriDownloaderCallback callback;
   gsize bytes_loaded;
@@ -111,7 +109,6 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   // Reset private state fields
   skippy_uri_downloader_reset (downloader);
 
-  g_mutex_init (&downloader->priv->download_lock);
   g_cond_init (&downloader->priv->cond);
 }
 
@@ -120,25 +117,51 @@ skippy_uri_downloader_dispose (GObject * object)
 {
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (object);
 
+  // Let's reset first (this is flushing the message bus and unref-ing any owned download)
+  skippy_uri_downloader_reset (downloader);
+
+  // Shutdown everything
   if (downloader->priv->urisrc != NULL) {
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_NULL);
     gst_object_unref (downloader->priv->urisrc);
     downloader->priv->urisrc = NULL;
   }
 
+  // Get rid of bus
   if (downloader->priv->bus != NULL) {
     gst_object_unref (downloader->priv->bus);
     downloader->priv->bus = NULL;
   }
 
+  // Get rid of pad
   if (downloader->priv->pad) {
     gst_object_unref (downloader->priv->pad);
     downloader->priv->pad = NULL;
   }
 
-  skippy_uri_downloader_reset (downloader);
-
+  // Dispose base class
   G_OBJECT_CLASS (skippy_uri_downloader_parent_class)->dispose (object);
+}
+
+void
+skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
+{
+  g_return_if_fail (downloader != NULL);
+  GST_OBJECT_LOCK (downloader);
+  // Reset state
+  downloader->priv->err = NULL;
+  downloader->priv->got_buffer = FALSE;
+  downloader->priv->bytes_loaded = 0;
+  downloader->priv->bytes_total = 0;
+  downloader->priv->fetching = FALSE;
+  // Unref download
+  if (downloader->priv->download) {
+    g_object_unref (downloader->priv->download);
+    downloader->priv->download = NULL;
+  }
+  // Flush bus
+  gst_bus_set_flushing (downloader->priv->bus, FALSE);
+  GST_OBJECT_UNLOCK (downloader);
 }
 
 static void
@@ -146,7 +169,6 @@ skippy_uri_downloader_finalize (GObject * object)
 {
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (object);
 
-  g_mutex_clear (&downloader->priv->download_lock);
   g_cond_clear (&downloader->priv->cond);
 
   G_OBJECT_CLASS (skippy_uri_downloader_parent_class)->finalize (object);
@@ -178,9 +200,7 @@ skippy_uri_downloader_sink_event (GstPad * pad, GstObject * parent,
       GST_OBJECT_LOCK (downloader);
       GST_DEBUG_OBJECT (downloader, "Got EOS on the fetcher pad");
       if (downloader->priv->download != NULL) {
-        /* signal we have fetched the URI */
-        downloader->priv->download->completed = TRUE;
-        downloader->priv->download->download_stop_time = gst_util_get_timestamp ();
+        skippy_fragment_complete (downloader->priv->download, (struct SkippyUriDownloader *) downloader);
         GST_DEBUG_OBJECT (downloader, "Signaling chain funtion");
         g_cond_signal (&downloader->priv->cond);
       }
@@ -315,36 +335,16 @@ done:
 }
 
 void
-skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
-{
-  g_return_if_fail (downloader != NULL);
-
-  GST_OBJECT_LOCK (downloader);
-  downloader->priv->err = NULL;
-  downloader->priv->got_buffer = FALSE;
-  downloader->priv->bytes_loaded = 0;
-  downloader->priv->bytes_total = 0;
-  downloader->priv->fetching = FALSE;
-  if (downloader->priv->download) {
-    g_object_unref (downloader->priv->download);
-    downloader->priv->download = NULL;
-  }
-  gst_bus_set_flushing (downloader->priv->bus, FALSE);
-  GST_OBJECT_UNLOCK (downloader);
-}
-
-void
 skippy_uri_downloader_cancel (SkippyUriDownloader * downloader)
 {
+  GST_DEBUG ("Cancelling download");
   GST_OBJECT_LOCK (downloader);
-  if (downloader->priv->download && downloader->priv->fetching) {
-    GST_DEBUG_OBJECT (downloader, "Cancelling download");
+  if (downloader->priv->fetching) {
     downloader->priv->download->cancelled = TRUE;
-    GST_DEBUG_OBJECT (downloader, "Signaling chain funtion");
+    GST_DEBUG ("Signaling chain funtion");
     g_cond_signal (&downloader->priv->cond);
   } else {
-    GST_WARNING ("There is nothing to cancel!");
-    return;
+    GST_INFO ("There is no ongoing download to cancel");
   }
   GST_OBJECT_UNLOCK (downloader);
 }
@@ -466,13 +466,9 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   skippy_uri_downloader_reset (downloader);
   GST_OBJECT_LOCK (downloader);
 
-  // Indicating we are downloading
-  downloader->priv->fetching = TRUE;
   // Storing the current fragment for cancellation
   // Taking ownership, fragment should then only be accessed via the public functions of this object for MT-safety)
   downloader->priv->download = fragment;
-
-  g_mutex_lock (&downloader->priv->download_lock);
 
   // Set URL
   if (!skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)) {
@@ -521,16 +517,18 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
    *   - the download was canceled
    */
   GST_DEBUG_OBJECT (downloader, "Waiting to fetch the URI %s", fragment->uri);
-  while (!fragment->cancelled && !fragment->completed)
-    g_cond_wait (&downloader->priv->cond, GST_OBJECT_GET_LOCK (downloader));
 
-  if (fragment->cancelled) {
-    goto quit;
+  // Indicating we are downloading
+  downloader->priv->fetching = TRUE;
+  while (!fragment->cancelled && !fragment->completed) {
+    g_cond_wait (&downloader->priv->cond, GST_OBJECT_GET_LOCK (downloader));
+    GST_DEBUG ("Condition has been signalled");
   }
+  downloader->priv->fetching = FALSE;
 
   // Check wether we got any data
   if (!downloader->priv->got_buffer) {
-    GST_DEBUG_OBJECT (downloader, "Didn't retrieve a buffer before EOS");
+    GST_WARNING_OBJECT (downloader, "Didn't retrieve a buffer before EOS");
   }
 
 quit:
@@ -571,10 +569,6 @@ quit:
       g_propagate_error (err, downloader->priv->err);
     }
 
-    downloader->priv->fetching = FALSE;
-
     GST_OBJECT_UNLOCK (downloader);
-
-    g_mutex_unlock (&downloader->priv->download_lock);
   }
 }

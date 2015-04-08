@@ -36,6 +36,8 @@ typedef struct _SkippyFragment SkippyFragment;
 typedef struct _SkippyFragmentPrivate SkippyFragmentPrivate;
 typedef struct _SkippyFragmentClass SkippyFragmentClass;
 
+struct SkippyUriDownloader;
+
 struct _SkippyFragment
 {
   GObject parent;
@@ -53,6 +55,7 @@ struct _SkippyFragment
   guint64 duration;              /* Media fragment duration */
   gboolean index;                /* Index of the fragment */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
+  gboolean decrypted;
 
   SkippyFragmentPrivate *priv;
 };
@@ -65,9 +68,12 @@ struct _SkippyFragmentClass
 GType skippy_fragment_get_type (void);
 
 GstBuffer * skippy_fragment_get_buffer (SkippyFragment *fragment);
+gsize skippy_fragment_get_buffer_size (SkippyFragment* fragment);
 void skippy_fragment_set_caps (SkippyFragment * fragment, GstCaps * caps);
 GstCaps * skippy_fragment_get_caps (SkippyFragment * fragment);
 gboolean skippy_fragment_add_buffer (SkippyFragment *fragment, GstBuffer *buffer);
 SkippyFragment * skippy_fragment_new (const gchar* uri, gchar* key_uri, guint8* iv);
+void skippy_fragment_complete (SkippyFragment * fragment, struct SkippyUriDownloader* downloader);
+gboolean skippy_fragment_decrypt (SkippyFragment * fragment, struct SkippyUriDownloader* downloader);
 
 G_END_DECLS

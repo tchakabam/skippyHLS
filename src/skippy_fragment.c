@@ -21,11 +21,15 @@
 
 #include <string.h>
 
+#include <nettle/aes.h>
+#include <nettle/cbc.h>
+
 #include <glib.h>
 #include <gst/base/gsttypefindhelper.h>
 #include <gst/base/gstadapter.h>
 
 #include <skippyhls/skippy_fragment.h>
+#include <skippyhls/skippy_uridownloader.h>
 
 #define SKIPPY_FRAGMENT_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), TYPE_SKIPPY_FRAGMENT, SkippyFragmentPrivate))
 
@@ -78,6 +82,7 @@ skippy_fragment_init (SkippyFragment * fragment)
   fragment->completed = FALSE;
   fragment->cancelled = FALSE;
   fragment->discontinuous = FALSE;
+  fragment->decrypted = TRUE;
 }
 
 SkippyFragment *
@@ -91,6 +96,7 @@ skippy_fragment_new (const gchar* uri, gchar* key_uri, guint8* iv)
   fragment = SKIPPY_FRAGMENT (g_object_new (TYPE_SKIPPY_FRAGMENT, NULL));
   fragment->uri = g_strdup (uri);
   if (key_uri) {
+    fragment->decrypted = FALSE;
     fragment->key_uri = g_strdup (key_uri);
     memcpy (fragment->iv, iv, sizeof (fragment->iv));
   }
@@ -145,6 +151,16 @@ skippy_fragment_get_buffer (SkippyFragment * fragment)
 
   gst_buffer_ref (fragment->priv->buffer);
   return fragment->priv->buffer;
+}
+
+gsize skippy_fragment_get_buffer_size (SkippyFragment* fragment)
+{
+  g_return_val_if_fail (fragment != NULL, 0);
+
+  if (!fragment->priv->buffer)
+    return 0;
+
+  return gst_buffer_get_size (fragment->priv->buffer);
 }
 
 void
@@ -212,6 +228,145 @@ skippy_fragment_add_buffer (SkippyFragment * fragment, GstBuffer * buffer)
   else
     fragment->priv->buffer = gst_buffer_append (fragment->priv->buffer, buffer);
 
+  GST_DEBUG ( "Set buffer pts=%" GST_TIME_FORMAT " duration=%" GST_TIME_FORMAT,
+    GST_TIME_ARGS (fragment->start_time), GST_TIME_ARGS (fragment->duration));
+
+  /* Update buffer properties */
+  GST_BUFFER_DURATION (fragment->priv->buffer) = fragment->duration;
+  GST_BUFFER_PTS (fragment->priv->buffer) = fragment->start_time;
+  GST_BUFFER_DTS (fragment->priv->buffer) = GST_CLOCK_TIME_NONE;
+
   g_mutex_unlock (&fragment->priv->lock);
   return TRUE;
+}
+
+void
+skippy_fragment_clear_buffer (SkippyFragment * fragment)
+{
+  g_return_if_fail (fragment != NULL);
+
+  g_mutex_lock (&fragment->priv->lock);
+  if (fragment->priv->buffer)
+    gst_buffer_unref (fragment->priv->buffer);
+  fragment->priv->buffer = NULL;
+  g_mutex_unlock (&fragment->priv->lock);
+}
+
+void
+skippy_fragment_complete (SkippyFragment * fragment, struct SkippyUriDownloader* downloader)
+{
+  g_return_if_fail (fragment != NULL);
+  g_return_if_fail (downloader != NULL);
+
+  g_mutex_lock (&fragment->priv->lock);
+  GST_DEBUG ("Completing fragment");
+  fragment->completed = TRUE;
+  fragment->download_stop_time = gst_util_get_timestamp ();
+  if (!fragment->decrypted) {
+    g_mutex_unlock (&fragment->priv->lock);
+    skippy_fragment_decrypt (fragment, downloader);
+    g_mutex_lock (&fragment->priv->lock);
+  }
+  g_mutex_unlock (&fragment->priv->lock);
+}
+
+/* Decrypt a buffer */
+static gboolean
+decrypt_buffer (gsize length,
+    const guint8 * encrypted_data, guint8 * decrypted_data,
+    const guint8 * key_data, const guint8 * iv_data)
+{
+  struct CBC_CTX (struct aes_ctx, AES_BLOCK_SIZE) aes_ctx;
+
+  if (length % 16 != 0)
+    return FALSE;
+
+  aes_set_decrypt_key (&aes_ctx.ctx, 16, key_data);
+  CBC_SET_IV (&aes_ctx, iv_data);
+
+  CBC_DECRYPT (&aes_ctx, aes_decrypt, length, decrypted_data, encrypted_data);
+
+  return TRUE;
+}
+
+/* Decrypt a fragment */
+gboolean
+skippy_fragment_decrypt (SkippyFragment * fragment,
+  struct SkippyUriDownloader* downloader)
+{
+  g_return_val_if_fail (fragment != NULL, FALSE);
+  g_return_val_if_fail (downloader != NULL, FALSE);
+
+  g_mutex_lock (&fragment->priv->lock);
+
+  GError* err = NULL;
+  SkippyFragment* key_fragment;
+  GstBuffer *key_buffer, *encrypted_buffer, *decrypted_buffer;
+  GstMapInfo key_info, encrypted_info, decrypted_info;
+  gsize unpadded_size;
+
+  if (fragment->decrypted) {
+    GST_WARNING ("Fragment already decrypted!");
+    goto error;
+  }
+
+  GST_INFO ("Fetching key %s", fragment->key_uri);
+  key_fragment = skippy_fragment_new (fragment->key_uri, NULL, NULL);
+  skippy_uri_downloader_fetch_fragment ( (SkippyUriDownloader*) downloader,
+    key_fragment,
+    NULL,
+    FALSE,
+    FALSE,
+    TRUE,
+    &err
+  );
+  if (!key_fragment->completed) {
+    GST_ERROR ("Failed to fetch key from URI: %s (%s)", key_fragment->uri, err->message);
+    goto error;
+  }
+
+  key_buffer = skippy_fragment_get_buffer (key_fragment);
+  encrypted_buffer = skippy_fragment_get_buffer (fragment);
+  decrypted_buffer =
+      gst_buffer_new_allocate (NULL, gst_buffer_get_size (encrypted_buffer),
+      NULL);
+
+  gst_buffer_map (key_buffer, &key_info, GST_MAP_READ);
+  gst_buffer_map (encrypted_buffer, &encrypted_info, GST_MAP_READ);
+  gst_buffer_map (decrypted_buffer, &decrypted_info, GST_MAP_WRITE);
+
+  if (key_info.size != 16)
+    goto decrypt_error;
+  if (!decrypt_buffer (encrypted_info.size,
+          encrypted_info.data, decrypted_info.data, key_info.data, fragment->iv))
+    goto decrypt_error;
+
+  /* Handle pkcs7 unpadding here */
+  unpadded_size =
+      decrypted_info.size - decrypted_info.data[decrypted_info.size - 1];
+  gst_buffer_resize (decrypted_buffer, 0, unpadded_size);
+
+  skippy_fragment_clear_buffer (fragment);
+  skippy_fragment_add_buffer (fragment, decrypted_buffer);
+  // we ref here because we will unref it later but in fact in this case we keep ownership
+  gst_buffer_ref (fragment->priv->buffer);
+  fragment->decrypted = TRUE;
+
+decrypt_error:
+  GST_ERROR ("Failed to decrypt fragment");
+  g_set_error (&err, GST_STREAM_ERROR, GST_STREAM_ERROR_DECRYPT,
+      "Failed to decrypt fragment");
+
+  gst_buffer_unmap (decrypted_buffer, &decrypted_info);
+  gst_buffer_unmap (encrypted_buffer, &encrypted_info);
+  gst_buffer_unmap (key_buffer, &key_info);
+
+  gst_buffer_unref (key_buffer);
+  gst_buffer_unref (encrypted_buffer);
+  gst_buffer_unref (decrypted_buffer);
+
+error:
+  g_object_unref (key_fragment);
+  g_mutex_unlock (&fragment->priv->lock);
+  return fragment->decrypted;
 }

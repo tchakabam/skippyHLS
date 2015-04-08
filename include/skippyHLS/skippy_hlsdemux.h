@@ -66,8 +66,7 @@ struct _SkippyHLSDemux
   GstCaps *input_caps;
   SkippyUriDownloader *downloader;
   gchar *uri;                   /* Original playlist URI */
-  SkippyM3U8Client *client;        /* M3U8 client */
-  gboolean do_typefind;         /* Whether we need to typefind the next buffer */
+  SkippyM3U8Client *client;     /* M3U8 client */
 
   /* Properties */
   guint buffer_ahead_duration_secs;
@@ -78,30 +77,16 @@ struct _SkippyHLSDemux
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
-  gboolean stop_stream_task;
-  GMutex download_lock;         /* Used for protecting queue and the two conds */
-  GCond download_cond;          /* Signalled when something is added to the queue */
-  gboolean end_of_playlist;
-  gint download_failed_count;
-  gint64 next_download;
-
-  /* Updates task */
-  GstTask *updates_task;
-  GRecMutex updates_lock;
-  gint64 next_update;           /* Time of the next update */
-  gboolean stop_updates_task;
-  GMutex updates_timed_lock;
-  GCond updates_timed_cond;     /* Signalled when the playlist should be updated */
 
   /* Position in the stream */
+  guint64 next_update;
+  gboolean end_of_playlist;
+  gint download_failed_count;
+  gboolean do_typefind;         /* Whether we need to typefind the next buffer */
   GstSegment segment;
   gboolean need_segment;
   gboolean discont;
   gboolean seeked;
-
-  /* Cache for the last key */
-  gchar *key_url;
-  SkippyFragment *key_fragment;
 
   /* Current download rate (bps) */
   gint current_download_rate;
