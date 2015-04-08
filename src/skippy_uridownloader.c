@@ -149,6 +149,9 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
   g_return_if_fail (downloader != NULL);
   GST_OBJECT_LOCK (downloader);
   // Reset state
+  if (downloader->priv->err) {
+    g_error_free (downloader->priv->err);
+  }
   downloader->priv->err = NULL;
   downloader->priv->got_buffer = FALSE;
   downloader->priv->bytes_loaded = 0;
@@ -240,31 +243,28 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
     GstMessage * message, gpointer data)
 {
   SkippyUriDownloader *downloader = (SkippyUriDownloader *) (data);
+  GError *err = NULL;
+  gchar *dbg_info = NULL;
+  gchar *full_message;
 
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
-    GError *err = NULL;
-    gchar *dbg_info = NULL;
 
     gst_message_parse_error (message, &err, &dbg_info);
+
     GST_INFO_OBJECT (downloader,
         "Received error: %s from %s, the download will be cancelled",
         err->message, GST_OBJECT_NAME (message->src));
     GST_DEBUG ("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
 
     if (dbg_info) {
-      gchar *full_message;
-
       full_message = g_strdup_printf ("%s\n%s", err->message, dbg_info);
       g_free (err->message);
       err->message = full_message;
     }
-
-    if (!downloader->priv->err)
-      downloader->priv->err = err;
-    else
-      g_error_free (err);
-
     g_free (dbg_info);
+
+    // Set current error
+    downloader->priv->err = err;
 
     /* remove the sync handler to avoid duplicated messages */
     gst_bus_set_sync_handler (downloader->priv->bus, NULL, NULL, NULL);
@@ -273,13 +273,11 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
     GST_OBJECT_LOCK (downloader);
     if (downloader->priv->download != NULL) {
       GST_DEBUG_OBJECT (downloader, "Stopping download");
-      downloader->priv->download->cancelled = TRUE;
       g_cond_signal (&downloader->priv->cond);
     }
     GST_OBJECT_UNLOCK (downloader);
+
   } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_WARNING) {
-    GError *err = NULL;
-    gchar *dbg_info = NULL;
 
     gst_message_parse_warning (message, &err, &dbg_info);
     GST_WARNING_OBJECT (downloader,
@@ -302,13 +300,14 @@ skippy_uri_downloader_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
   downloader = SKIPPY_URI_DOWNLOADER (gst_pad_get_element_private (pad));
 
-  /* HTML errors (404, 500, etc...) are also pushed through this pad as
+  /* HTTP errors (404, 500, etc...) are also pushed through this pad as
    * response but the source element will also post a warning or error message
    * in the bus, which is handled synchronously cancelling the download.
    */
   GST_OBJECT_LOCK (downloader);
-  if (downloader->priv->download == NULL) {
-    /* Download cancelled, quit */
+
+  // There was an error downloading, quit
+  if (downloader->priv->err) {
     GST_OBJECT_UNLOCK (downloader);
     goto done;
   }
@@ -487,11 +486,6 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
     goto quit;
   }
 
-  /* might have been cancelled because of failures in state change */
-  if (fragment->cancelled) {
-    goto quit;
-  }
-
   // Set range
   if (!skippy_uri_downloader_set_range (downloader, fragment->range_start, fragment->range_end)) {
     GST_WARNING_OBJECT (downloader, "Failed to set range");
@@ -503,11 +497,6 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   ret = gst_element_set_state (downloader->priv->urisrc, GST_STATE_PLAYING);
   GST_OBJECT_LOCK (downloader);
   if (ret == GST_STATE_CHANGE_FAILURE) {
-    goto quit;
-  }
-
-  /* might have been cancelled because of failures in state change */
-  if (fragment->cancelled) {
     goto quit;
   }
 

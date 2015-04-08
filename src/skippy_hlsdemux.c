@@ -117,8 +117,7 @@ static void skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux);
 static gboolean skippy_hls_demux_switch_playlist (SkippyHLSDemux * demux,
     SkippyFragment * fragment);
 static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, GError ** err);
-static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux,
-    gboolean update, GError ** err);
+static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux, GError ** err);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose);
 static gboolean skippy_hls_demux_set_location (SkippyHLSDemux * demux,
     const gchar * uri);
@@ -241,6 +240,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
       GST_DEBUG_FUNCPTR (skippy_hls_demux_sink_event));
   gst_element_add_pad (GST_ELEMENT (demux), demux->sinkpad);
 
+  demux->playlist = NULL;
+
   /* Downloader */
   demux->downloader = skippy_uri_downloader_new (downloader_callback);
 
@@ -272,14 +273,14 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   demux->download_failed_count = 0;
   demux->current_download_rate = -1;
 
-  if (demux->input_caps) {
-    gst_caps_unref (demux->input_caps);
-    demux->input_caps = NULL;
-  }
-
   if (demux->playlist) {
     gst_buffer_unref (demux->playlist);
     demux->playlist = NULL;
+  }
+
+  if (demux->input_caps) {
+    gst_caps_unref (demux->input_caps);
+    demux->input_caps = NULL;
   }
 
   if (demux->client) {
@@ -553,20 +554,44 @@ skippy_hls_demux_query_location (SkippyHLSDemux * demux)
 }
 
 static gboolean
-skippy_hls_demux_parse_playlist (SkippyHLSDemux * demux)
+skippy_hls_demux_load_initial_playlist (SkippyHLSDemux* demux)
 {
-  gchar* playlist = skippy_hls_src_buf_to_utf8_playlist (demux->playlist);
-  demux->playlist = NULL;
-  if (playlist == NULL) {
-    GST_WARNING_OBJECT (demux, "Error validating first playlist.");
-  } else if (!skippy_m3u8_client_update (demux->client, playlist)) {
-    /* In most cases, this will happen if we set a wrong url in the
-     * source element and we have received the 404 HTML response instead of
-     * the playlist */
-    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."),
-        (NULL));
+  gboolean ret;
+
+  // No playlist - can't do anything
+  if (demux->playlist == NULL) {
+    GST_WARNING_OBJECT (demux, "Received EOS without a playlist.");
     return FALSE;
   }
+
+  GST_DEBUG_OBJECT (demux, "Got EOS on the sink pad: main playlist fetched");
+
+  // Sending stats message about first playlist fetch
+  skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, gst_util_get_timestamp (), 0);
+
+  // Query the playlist URI
+  ret = skippy_hls_demux_query_location (demux);
+
+  // Parse playlist
+  if (!skippy_m3u8_client_load_playlist (demux->client, demux->playlist)) {
+    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
+    return FALSE;
+  }
+
+  // Playlist is live but failed to get source URI
+  if (!ret && skippy_m3u8_client_is_live (demux->client)) {
+    GST_ELEMENT_ERROR (demux, RESOURCE, NOT_FOUND,
+        ("Failed querying the playlist uri, "
+            "required for live sources."), (NULL));
+    return FALSE;
+  }
+
+  // Sets up the initial playlist (for when using a variant / sub-playlist)
+  skippy_hls_demux_setup_playlist (demux);
+
+  // Start the main task
+  gst_task_start (demux->stream_task);
+
   return TRUE;
 }
 
@@ -574,50 +599,15 @@ static gboolean
 skippy_hls_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
   SkippyHLSDemux *demux;
-  gboolean ret;
-  GstStructure *stat_msg;
 
   demux = SKIPPY_HLS_DEMUX (parent);
 
   GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
 
   switch (event->type) {
-    case GST_EVENT_EOS:{
-      // No playlist - can't do anything
-      if (demux->playlist == NULL) {
-        GST_WARNING_OBJECT (demux, "Received EOS without a playlist.");
-        break;
-      }
-
-      GST_DEBUG_OBJECT (demux, "Got EOS on the sink pad: main playlist fetched");
-
-      // Sending stats message about first playlist fetch
-      skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, gst_util_get_timestamp (), 0);
-
-      // Query the playlist URI
-      ret = skippy_hls_demux_query_location (demux);
-
-      // Parse playlist
-      if (!skippy_hls_demux_parse_playlist (demux)) {
-        return FALSE;
-      }
-
-      // Playlist is live but failed to get source URI
-      if (!ret && skippy_m3u8_client_is_live (demux->client)) {
-        GST_ELEMENT_ERROR (demux, RESOURCE, NOT_FOUND,
-            ("Failed querying the playlist uri, "
-                "required for live sources."), (NULL));
-        return FALSE;
-      }
-
-      // Sets up the initial playlist (for when using a variant / sub-playlist)
-      skippy_hls_demux_setup_playlist (demux);
-
-      // Start the main task
-      gst_task_start (demux->stream_task);
-      gst_event_unref (event);
-      return TRUE;
-    }
+    case GST_EVENT_EOS:
+      gst_event_unref (event); // we don't want to forward the EOS
+      return skippy_hls_demux_load_initial_playlist (demux);
     case GST_EVENT_SEGMENT:
       /* Swallow new segments, we'll push our own */
       gst_event_unref (event);
@@ -713,6 +703,7 @@ skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux)
 {
   GST_DEBUG ("Pausing task ...");
   gst_task_pause (demux->stream_task);
+  skippy_uri_downloader_cancel (demux->downloader);
   g_rec_mutex_lock (&demux->stream_lock);
   g_rec_mutex_unlock (&demux->stream_lock);
   GST_DEBUG ("Paused streaming task");
@@ -978,6 +969,11 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
     GST_DEBUG ("Got NULL as next fragment");
 
+    if (fragment->cancelled) {
+      GST_DEBUG ("Fragment fetch got cancelled");
+      return;
+    }
+
     // Is it just end of playlist?
     if (!err) {
       if (skippy_m3u8_client_is_live (demux->client)) {
@@ -999,7 +995,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
         // || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND)
         )) {
         g_clear_error (&err);
-      if (skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
+      if (skippy_hls_demux_update_playlist (demux, &err)) {
         // Success means err === NULL
         return;
       }
@@ -1120,8 +1116,7 @@ skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux)
 
     GST_DEBUG_OBJECT (demux, "Updating playlist ...");
 
-    if (!skippy_hls_demux_update_playlist (demux, TRUE, &err)) { // When failing
-      demux->client->update_failed_count++;
+    if (!skippy_hls_demux_update_playlist (demux, &err)) { // When failing
       if (err) {
         GST_ERROR ("Got error updating live playlist: %s", err->message);
       }
@@ -1140,28 +1135,23 @@ skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux)
 static void
 skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux)
 {
-  SkippyM3U8 *child = NULL;
+  SkippyM3U8 *variant = NULL;
   GError *err = NULL;
 
   /* If this playlist is a variant playlist, select the first one
    * and update it */
   if (skippy_m3u8_client_has_variant_playlist (demux->client)) {
-
     // Select child playlist
     if (demux->connection_speed == 0) {
-      SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-      child = demux->client->main->current_variant->data;
-      SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
+      variant = skippy_m3u8_client_get_current_variant (demux->client);
     } else {
-      GList *tmp = skippy_m3u8_client_get_playlist_for_bitrate (demux->client,
+      variant = skippy_m3u8_client_get_playlist_for_bitrate (demux->client,
           demux->connection_speed);
-
-      child = SKIPPY_M3U8 (tmp->data);
     }
-
     // Fetch child playlist
-    skippy_m3u8_client_set_current (demux->client, child);
-    if (!skippy_hls_demux_update_playlist (demux, FALSE, &err)) {
+    skippy_m3u8_client_set_current (demux->client, variant);
+
+    if (!skippy_hls_demux_update_playlist (demux, &err)) {
       GST_ELEMENT_ERROR_FROM_ERROR (demux, "Could not fetch child playlist", err);
       return;
     }
@@ -1182,93 +1172,11 @@ skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux)
   return;
 }
 
-static gchar *
-skippy_hls_src_buf_to_utf8_playlist (GstBuffer * buf)
-{
-  GstMapInfo info;
-  gchar *playlist;
-
-  if (!gst_buffer_map (buf, &info, GST_MAP_READ))
-    goto map_error;
-
-  if (!g_utf8_validate ((gchar *) info.data, info.size, NULL))
-    goto validate_error;
-
-  /* alloc size + 1 to end with a null character */
-  playlist = g_malloc0 (info.size + 1);
-  memcpy (playlist, info.data, info.size);
-
-  gst_buffer_unmap (buf, &info);
-  gst_buffer_unref (buf);
-  return playlist;
-
-validate_error:
-  gst_buffer_unmap (buf, &info);
-map_error:
-  gst_buffer_unref (buf);
-  return NULL;
-}
-
-static void
-skippy_hls_demux_update_playlist_position (SkippyHLSDemux * demux, gboolean updated)
-{
-  GstClockTime current_pos, target_pos;
-  guint sequence, last_sequence = 0;
-  GList *walk;
-  SkippyM3U8MediaFile *file;
-
-  /* If it's a live source, do not let the sequence number go beyond
-   * three fragments before the end of the list */
-  if (updated == FALSE && demux->client->current &&
-      skippy_m3u8_client_is_live (demux->client)) {
-
-    SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-    last_sequence =
-        SKIPPY_M3U8_MEDIA_FILE (g_list_last (demux->client->current->files)->
-        data)->sequence;
-
-    if (demux->client->sequence >= last_sequence - 3) {
-      GST_DEBUG_OBJECT (demux, "Sequence is beyond playlist. Moving back to %d",
-          last_sequence - 3);
-      demux->need_segment = TRUE;
-      demux->client->sequence = last_sequence - 3;
-    }
-    SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
-  } else if (demux->client->current && !skippy_m3u8_client_is_live (demux->client)) {
-
-    /* Sequence numbers are not guaranteed to be the same in different
-     * playlists, so get the correct fragment here based on the current
-     * position
-     */
-    SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-    current_pos = 0;
-    target_pos = demux->segment.position;
-    for (walk = demux->client->current->files; walk; walk = walk->next) {
-      file = walk->data;
-
-      sequence = file->sequence;
-      if (current_pos <= target_pos
-          && target_pos < current_pos + file->duration) {
-        break;
-      }
-      current_pos += file->duration;
-    }
-    /* End of playlist */
-    if (!walk)
-      sequence++;
-    demux->client->sequence = sequence;
-    demux->client->sequence_position = current_pos;
-    SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
-  }
-}
-
 static gboolean
-skippy_hls_demux_update_playlist (SkippyHLSDemux * demux, gboolean update,
-    GError ** err)
+skippy_hls_demux_update_playlist (SkippyHLSDemux * demux, GError ** err)
 {
   SkippyFragment *download;
   GstBuffer *buf;
-  gchar *playlist;
   gboolean updated = FALSE;
   GstStructure *stat_msg;
 
@@ -1285,14 +1193,18 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux, gboolean update,
 
   skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_PLAYLIST, download->download_stop_time - download->download_start_time, 0);
 
-  demux->playlist = skippy_fragment_get_buffer (download);
-  g_object_unref (download);
-
-  if (skippy_hls_demux_parse_playlist (demux)) {
-    updated = TRUE;
+  // Load M3U8 buffer into parser
+  if (!skippy_m3u8_client_load_playlist (demux->client, skippy_fragment_get_buffer (download))) {
+    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
+    return FALSE;
   }
 
-  skippy_hls_demux_update_playlist_position (demux, updated);
+  // Sequence numbers across variants may differ, and we need to input our current position to reach
+  // the correct sequence number (we might have to re-issue a segment event as well
+  // if the current sequence number is too far ahead of a live stream)
+  skippy_m3u8_client_update_playlist_position (demux->client, demux->segment.position, &demux->need_segment);
+
+  g_object_unref (download);
 
   return updated;
 }

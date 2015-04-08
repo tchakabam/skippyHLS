@@ -557,7 +557,6 @@ skippy_m3u8_client_new (const gchar * uri)
   client->current = NULL;
   client->sequence = -1;
   client->sequence_position = 0;
-  client->update_failed_count = 0;
   g_mutex_init (&client->lock);
   skippy_m3u8_set_uri (client->main, g_strdup (uri));
 
@@ -582,7 +581,6 @@ skippy_m3u8_client_set_current (SkippyM3U8Client * self, SkippyM3U8 * m3u8)
   SKIPPY_M3U8_CLIENT_LOCK (self);
   if (m3u8 != self->current) {
     self->current = m3u8;
-    self->update_failed_count = 0;
   }
   SKIPPY_M3U8_CLIENT_UNLOCK (self);
 }
@@ -603,7 +601,6 @@ skippy_m3u8_client_update (SkippyM3U8Client * self, gchar * data)
     goto out;
 
   if (!updated) {
-    self->update_failed_count++;
     goto out;
   }
 
@@ -803,7 +800,7 @@ skippy_m3u8_client_is_live (SkippyM3U8Client * client)
   return ret;
 }
 
-GList *
+SkippyM3U8 *
 skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate)
 {
   GList *list, *current_variant;
@@ -827,7 +824,18 @@ skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bi
   }
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
 
-  return current_variant;
+  return SKIPPY_M3U8 (current_variant->data);
+}
+
+SkippyM3U8 *
+skippy_m3u8_client_get_current_variant (SkippyM3U8Client * self)
+{
+  GList* variant;
+  SKIPPY_M3U8_CLIENT_LOCK (self);
+  variant = self->main->current_variant->data;
+  SKIPPY_M3U8_CLIENT_UNLOCK (self);
+
+  return SKIPPY_M3U8 (variant->data);
 }
 
 gchar *
@@ -907,3 +915,91 @@ skippy_m3u8_client_get_current_fragment_duration (SkippyM3U8Client * client)
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return dur;
 }
+
+void
+skippy_m3u8_client_update_playlist_position (SkippyM3U8Client * client, guint64 target_pos, gboolean* need_segment)
+{
+  GstClockTime current_pos;
+  guint sequence, last_sequence = 0;
+  GList *walk;
+  SkippyM3U8MediaFile *file;
+
+  /* If it's a live source, do not let the sequence number go beyond
+   * three fragments before the end of the list */
+  if (client->current && skippy_m3u8_client_is_live (client)) {
+    SKIPPY_M3U8_CLIENT_LOCK (client);
+    last_sequence =
+        SKIPPY_M3U8_MEDIA_FILE (g_list_last (client->current->files)->
+        data)->sequence;
+
+    if (client->sequence >= last_sequence - 3) {
+      GST_DEBUG_OBJECT (client, "Sequence is beyond playlist. Moving back to %d",
+          last_sequence - 3);
+      *need_segment = TRUE;
+      client->sequence = last_sequence - 3;
+    }
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
+  } else if (client->current && !skippy_m3u8_client_is_live (client)) {
+    /* Sequence numbers are not guaranteed to be the same in different
+     * playlists, so get the correct fragment here based on the current
+     * position
+     */
+    SKIPPY_M3U8_CLIENT_LOCK (client);
+    current_pos = 0;
+    for (walk = client->current->files; walk; walk = walk->next) {
+      file = walk->data;
+      sequence = file->sequence;
+      if (current_pos <= target_pos
+          && target_pos < current_pos + file->duration) {
+        break;
+      }
+      current_pos += file->duration;
+    }
+    /* End of playlist */
+    if (!walk)
+      sequence++;
+    client->sequence = sequence;
+    client->sequence_position = current_pos;
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
+  }
+}
+
+static gchar *
+buf_to_utf8_playlist (GstBuffer * buf)
+{
+  GstMapInfo info;
+  gchar *playlist;
+
+  if (!gst_buffer_map (buf, &info, GST_MAP_READ))
+    goto map_error;
+
+  if (!g_utf8_validate ((gchar *) info.data, info.size, NULL))
+    goto validate_error;
+
+  /* alloc size + 1 to end with a null character */
+  playlist = g_malloc0 (info.size + 1);
+  memcpy (playlist, info.data, info.size);
+
+  gst_buffer_unmap (buf, &info);
+  gst_buffer_unref (buf);
+  return playlist;
+
+validate_error:
+  gst_buffer_unmap (buf, &info);
+map_error:
+  gst_buffer_unref (buf);
+  return NULL;
+}
+
+gboolean
+skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, GstBuffer* playlist_buffer)
+{
+  gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
+  if (playlist == NULL) {
+    GST_WARNING ("Error converting playlist from raw buffer to UTF8");
+  } else if (!skippy_m3u8_client_update (client, playlist)) {
+    return FALSE;
+  }
+  return TRUE;
+}
+

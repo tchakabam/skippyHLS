@@ -62,7 +62,7 @@ struct _SkippyHLSDemux
   gboolean have_group_id;
   guint group_id;
 
-  GstBuffer *playlist;
+  GstBuffer* playlist;
   GstCaps *input_caps;
   SkippyUriDownloader *downloader;
   gchar *uri;                   /* Original playlist URI */
