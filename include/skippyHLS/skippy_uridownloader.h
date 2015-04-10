@@ -40,6 +40,12 @@ typedef struct _SkippyUriDownloaderClass SkippyUriDownloaderClass;
 
 typedef void (*SkippyUriDownloaderCallback) (SkippyUriDownloader *downloader, guint64 start_time, guint64 stop_time,
 																				gsize bytes_loaded, gsize bytes_total);
+typedef enum {
+	SKIPPY_URI_DOWNLOADER_VOID,
+	SKIPPY_URI_DOWNLOADER_FAILED,
+	SKIPPY_URI_DOWNLOADER_CANCELLED,
+	SKIPPY_URI_DOWNLOADER_COMPLETED,
+} SkippyUriDownloaderFetchReturn;
 
 struct _SkippyUriDownloader
 {
@@ -59,7 +65,7 @@ struct _SkippyUriDownloaderClass
 GType skippy_uri_downloader_get_type (void);
 
 SkippyUriDownloader * skippy_uri_downloader_new (SkippyUriDownloaderCallback callback);
-void skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,
+SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,
 	const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
 void skippy_uri_downloader_reset (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_cancel (SkippyUriDownloader *downloader);

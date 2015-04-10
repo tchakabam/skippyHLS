@@ -177,9 +177,8 @@ GstCaps *
 skippy_fragment_get_caps (SkippyFragment * fragment)
 {
   g_return_val_if_fail (fragment != NULL, NULL);
-  g_return_val_if_fail (fragment->priv->buffer != NULL, NULL);
 
-  if (!fragment->completed) {
+  if (!fragment->completed || fragment->priv->buffer == NULL) {
     GST_WARNING ("Can't get caps of incomplete fragment");
     return NULL;
   }
