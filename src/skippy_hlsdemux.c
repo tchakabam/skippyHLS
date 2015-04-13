@@ -459,8 +459,10 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
     gst_pad_push_event (demux->srcpad, gst_event_new_flush_stop (TRUE));
   }
 
-  /* Restart the streaming task */
+  // Restart the streaming task
   gst_task_start (demux->stream_task);
+
+  GST_DEBUG ("Restarted streaming task");
 
   // Swallow event
   gst_event_unref (event);
@@ -685,8 +687,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       gint64 stop = -1;
 
       gst_query_parse_seeking (query, &fmt, NULL, NULL, NULL);
-      GST_INFO_OBJECT (hlsdemux, "Received GST_QUERY_SEEKING with format %d",
-          fmt);
+      GST_INFO_OBJECT (hlsdemux, "Received GST_QUERY_SEEKING with format %d", fmt);
       if (fmt == GST_FORMAT_TIME) {
         GstClockTime duration;
 
@@ -699,7 +700,10 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
         ret = TRUE;
         GST_INFO_OBJECT (hlsdemux, "GST_QUERY_SEEKING returning with stop : %"
             GST_TIME_FORMAT, GST_TIME_ARGS (stop));
+      } else {
+        GST_WARNING ("Can't process seeking query that is not in time format");
       }
+
       break;
     }
     default:
@@ -1010,7 +1014,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     break;
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
     g_return_if_fail (!err);
-    g_return_if_fail (fragment);
+    g_return_if_fail (!fragment);
     GST_DEBUG ("Fragment fetch got cancelled on purpose");
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
@@ -1034,9 +1038,9 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
     g_return_if_fail (!err);
     g_return_if_fail (fragment);
+    GST_DEBUG ("Got next fragment");
     // Reset failure counter
     demux->download_failed_count = 0;
-    GST_DEBUG ("Got next fragment");
     // Push fragment onto pipeline
     skippy_hls_push_fragment (demux, fragment);
     // Drop current fragment in any case

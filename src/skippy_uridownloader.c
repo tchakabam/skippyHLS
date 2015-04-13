@@ -529,13 +529,14 @@ skippy_uri_downloader_unset_uri (SkippyUriDownloader * downloader)
  static SkippyUriDownloaderFetchReturn
  skippy_uri_downloader_handle_failure (SkippyUriDownloader * downloader, GError ** err)
  {
-  GST_OBJECT_UNLOCK (downloader);
   skippy_uri_downloader_unset_uri (downloader);
+  GST_OBJECT_LOCK (downloader);
   if (downloader->priv->err) {
     // Handle error
     GST_ERROR_OBJECT (downloader, "Error fetching URI: %s", downloader->priv->err->message);
     g_propagate_error (err, downloader->priv->err);
   }
+  GST_OBJECT_UNLOCK (downloader);
   return SKIPPY_URI_DOWNLOADER_FAILED;
  }
 
@@ -547,10 +548,6 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
 
   g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
   g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
-
-  // Just to make sure nobody uses us from two seperate threads
-  GST_OBJECT_LOCK (downloader);
-  GST_OBJECT_UNLOCK (downloader);
 
   // We spare our consumer to explicitely reset us for re-usal
   skippy_uri_downloader_reset (downloader);
@@ -565,6 +562,7 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   // Set URL
   if (!skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)) {
     GST_WARNING_OBJECT (downloader, "Failed to set URI");
+    GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -577,12 +575,14 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   // Check for failure
   if (ret == GST_STATE_CHANGE_FAILURE || downloader->priv->download == NULL) {
     GST_WARNING_OBJECT (downloader, "Failed to set src to READY");
+    GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
   // Set range
   if (!skippy_uri_downloader_set_range (downloader, fragment->range_start, fragment->range_end)) {
     GST_WARNING_OBJECT (downloader, "Failed to set range");
+    GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -592,6 +592,7 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   GST_DEBUG ("State change return: %s", gst_element_state_change_return_get_name (ret));
   GST_OBJECT_LOCK (downloader);
   if (ret == GST_STATE_CHANGE_FAILURE) {
+    GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -610,17 +611,21 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   }
   downloader->priv->fetching = FALSE;
 
+  GST_OBJECT_UNLOCK (downloader);
+  skippy_uri_downloader_unset_uri (downloader);
+  GST_OBJECT_LOCK (downloader);
+
   if (downloader->priv->err) {
     g_return_val_if_fail (!fragment->completed, SKIPPY_URI_DOWNLOADER_FAILED);
+    GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
   if (fragment->cancelled) {
-    g_return_val_if_fail (!fragment->completed, SKIPPY_URI_DOWNLOADER_CANCELLED);
+    GST_OBJECT_UNLOCK (downloader);
     return SKIPPY_URI_DOWNLOADER_CANCELLED;
   }
 
   GST_OBJECT_UNLOCK (downloader);
-  skippy_uri_downloader_unset_uri (downloader);
   return SKIPPY_URI_DOWNLOADER_COMPLETED;
 }
