@@ -27,8 +27,10 @@
 #include <glib.h>
 #include <string.h>
 
-//GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
-//#define GST_CAT_DEFAULT skippy_m3u8_debug
+GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
+#define GST_CAT_DEFAULT skippy_m3u8_debug
+
+static GOnce init_once = G_ONCE_INIT;
 
 static SkippyM3U8 *skippy_m3u8_new (void);
 static void skippy_m3u8_free (SkippyM3U8 * m3u8);
@@ -37,15 +39,21 @@ static gboolean skippy_m3u8_update (SkippyM3U8 * m3u8, gchar * data,
 static SkippyM3U8MediaFile *skippy_m3u8_media_file_new (gchar * uri,
     gchar * title, GstClockTime duration, guint sequence);
 static void skippy_m3u8_media_file_free (SkippyM3U8MediaFile * self);
-gchar *uri_join (const gchar * uri, const gchar * path);
+
+static gchar *uri_join (const gchar * uri, const gchar * path);
+
+static gpointer
+skippy_m3u8_init_once (gpointer user_data)
+{
+  GST_DEBUG_CATEGORY_INIT (skippy_m3u8_debug, "skippyhls-m3u8", 0, "M3U8 client");
+  return NULL;
+}
 
 static SkippyM3U8 *
 skippy_m3u8_new (void)
 {
   SkippyM3U8 *m3u8;
-
   m3u8 = g_new0 (SkippyM3U8, 1);
-
   return m3u8;
 }
 
@@ -548,6 +556,8 @@ skippy_m3u8_update (SkippyM3U8 * self, gchar * data, gboolean * updated)
 SkippyM3U8Client *
 skippy_m3u8_client_new (const gchar * uri)
 {
+  g_once (&init_once, skippy_m3u8_init_once, NULL);
+
   SkippyM3U8Client *client;
 
   g_return_val_if_fail (uri != NULL, NULL);
@@ -723,11 +733,16 @@ skippy_m3u8_client_get_duration (SkippyM3U8Client * client)
   SKIPPY_M3U8_CLIENT_LOCK (client);
   /* We can only get the duration for on-demand streams */
   if (!client->current || !client->current->endlist) {
+    GST_WARNING ("Can't determine playlist duration");
     SKIPPY_M3U8_CLIENT_UNLOCK (client);
     return GST_CLOCK_TIME_NONE;
   }
+
   if (client->current->files)
     g_list_foreach (client->current->files, (GFunc) _sum_duration, &duration);
+
+  GST_DEBUG ("Determined M3U8 duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (duration));
+
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return duration;
 }

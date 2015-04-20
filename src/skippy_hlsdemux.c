@@ -197,8 +197,8 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
       "Marc-Andre Lureau <marcandre.lureau@gmail.com>\n"
       "Andoni Morales Alastruey <ylatuya@gmail.com>");
 
-  GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "hlsdemux", 0,
-      "hlsdemux element");
+  GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhls-demux", 0,
+      "Skippy HLS client");
 }
 
 // TODO: send a message here on the bus instead
@@ -239,10 +239,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
   demux->caching_enabled = DEFAULT_CACHING_ENABLED;
 
-  // Internal flags
-  demux->do_typefind = TRUE;
-  demux->have_group_id = FALSE;
-  demux->group_id = G_MAXUINT;
+  // Reset everything to initial state
+  skippy_hls_demux_reset (demux, FALSE);
 
   /* Streamer task */
   g_rec_mutex_init (&demux->stream_lock);
@@ -256,10 +254,19 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
 {
   GST_DEBUG ("Re-setting element: (dispose=%d)", (int) dispose);
 
+  gst_segment_init (&demux->segment, GST_FORMAT_TIME);
+  demux->need_segment = TRUE;
+  demux->discont = TRUE;
+
   demux->end_of_playlist = FALSE;
+  demux->duration = GST_CLOCK_TIME_NONE;
   demux->do_typefind = TRUE;
   demux->download_failed_count = 0;
   demux->current_download_rate = -1;
+  demux->seeked = FALSE;
+  demux->have_group_id = FALSE;
+  demux->group_id = G_MAXUINT;
+  demux->srcpad_counter = 0;
 
   if (demux->playlist) {
     gst_buffer_unref (demux->playlist);
@@ -279,16 +286,6 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   if (!dispose) {
     demux->client = skippy_m3u8_client_new ("");
   }
-
-  gst_segment_init (&demux->segment, GST_FORMAT_TIME);
-  demux->need_segment = TRUE;
-  demux->discont = TRUE;
-  demux->seeked = FALSE;
-
-  demux->have_group_id = FALSE;
-  demux->group_id = G_MAXUINT;
-
-  demux->srcpad_counter = 0;
 
   if (demux->srcpad) {
     gst_element_remove_pad (GST_ELEMENT_CAST (demux), demux->srcpad);
@@ -356,7 +353,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
 
   switch (transition) {
-    case GST_STATE_CHANGE_READY_TO_PAUSED:
+    case GST_STATE_CHANGE_NULL_TO_READY:
       skippy_hls_demux_reset (demux, FALSE);
       break;
     case GST_STATE_CHANGE_PAUSED_TO_READY:
@@ -611,13 +608,14 @@ skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux)
 
   // Post duration message if non-live
   if (!skippy_m3u8_client_is_live (demux->client)) {
-    GstClockTime duration = skippy_m3u8_client_get_duration (demux->client);
-
-    GST_DEBUG_OBJECT (demux, "Sending duration message : %" GST_TIME_FORMAT,
-        GST_TIME_ARGS (duration));
-    if (duration != GST_CLOCK_TIME_NONE)
-      gst_element_post_message (GST_ELEMENT (demux),
-          gst_message_new_duration_changed (GST_OBJECT (demux)));
+    demux->duration = skippy_m3u8_client_get_duration (demux->client);
+    GST_DEBUG_OBJECT (demux, "Playlist duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (demux->duration));
+    if (demux->duration == GST_CLOCK_TIME_NONE) {
+      GST_ERROR ("Duration has invalid value, not posting message to pipeline");
+      return;
+    }
+    gst_element_post_message (GST_ELEMENT (demux),
+        gst_message_new_duration_changed (GST_OBJECT (demux)));
   }
 
   GST_DEBUG_OBJECT (demux, "Finished setting up playlist");
@@ -653,66 +651,55 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 {
   SkippyHLSDemux *hlsdemux = SKIPPY_HLS_DEMUX (parent);
   gboolean ret = FALSE;
+  GstFormat fmt;
+  gint64 stop = -1;
 
   if (query == NULL)
     return FALSE;
-
   switch (query->type) {
-    case GST_QUERY_DURATION:{
-      GstClockTime duration = -1;
-      GstFormat fmt;
-
+    case GST_QUERY_DURATION:
       gst_query_parse_duration (query, &fmt, NULL);
-      if (fmt == GST_FORMAT_TIME) {
-        duration = skippy_m3u8_client_get_duration (hlsdemux->client);
-        if (GST_CLOCK_TIME_IS_VALID (duration) && duration > 0) {
-          gst_query_set_duration (query, GST_FORMAT_TIME, duration);
-          ret = TRUE;
-        }
+      GST_TRACE_OBJECT (hlsdemux, "Received GST_QUERY_DURATION with format %d", fmt);
+      if (fmt != GST_FORMAT_TIME) {
+        GST_WARNING ("Can't process duration query that is not in time format");
+        break;
       }
-      GST_TRACE_OBJECT (hlsdemux, "GST_QUERY_DURATION returns %s with duration %"
-          GST_TIME_FORMAT, ret ? "TRUE" : "FALSE", GST_TIME_ARGS (duration));
+      if (GST_CLOCK_TIME_IS_VALID (hlsdemux->duration) && hlsdemux->duration > 0) {
+        gst_query_set_duration (query, GST_FORMAT_TIME, hlsdemux->duration);
+        GST_TRACE_OBJECT (hlsdemux, "GST_QUERY_DURATION returns with duration %" GST_TIME_FORMAT, GST_TIME_ARGS (hlsdemux->duration));
+        ret = TRUE;
+      } else {
+        GST_WARNING ("Bad duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (hlsdemux->duration));
+      }
       break;
-    }
     case GST_QUERY_URI:
       if (hlsdemux->client) {
-        /* FIXME: Do we answer with the variant playlist, with the current
-         * playlist or the the uri of the downloaded fragment? */
         gst_query_set_uri (query, skippy_m3u8_client_get_uri (hlsdemux->client));
         ret = TRUE;
       }
       break;
-    case GST_QUERY_SEEKING:{
-      GstFormat fmt;
-      gint64 stop = -1;
-
+    case GST_QUERY_SEEKING:
       gst_query_parse_seeking (query, &fmt, NULL, NULL, NULL);
       GST_INFO_OBJECT (hlsdemux, "Received GST_QUERY_SEEKING with format %d", fmt);
-      if (fmt == GST_FORMAT_TIME) {
-        GstClockTime duration;
-
-        duration = skippy_m3u8_client_get_duration (hlsdemux->client);
-        if (GST_CLOCK_TIME_IS_VALID (duration) && duration > 0)
-          stop = duration;
-
-        gst_query_set_seeking (query, fmt,
-            !skippy_m3u8_client_is_live (hlsdemux->client), 0, stop);
-        ret = TRUE;
-        GST_INFO_OBJECT (hlsdemux, "GST_QUERY_SEEKING returning with stop : %"
-            GST_TIME_FORMAT, GST_TIME_ARGS (stop));
-      } else {
+      if (fmt != GST_FORMAT_TIME) {
         GST_WARNING ("Can't process seeking query that is not in time format");
+        break;
       }
-
+      if (GST_CLOCK_TIME_IS_VALID (hlsdemux->duration) && hlsdemux->duration > 0) {
+        stop = hlsdemux->duration;
+        gst_query_set_seeking (query, fmt, !skippy_m3u8_client_is_live (hlsdemux->client), 0, stop);
+        ret = TRUE;
+        GST_INFO_OBJECT (hlsdemux, "GST_QUERY_SEEKING returning with stop : %" GST_TIME_FORMAT, GST_TIME_ARGS (stop));
+      } else {
+        GST_WARNING ("Bad duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (hlsdemux->duration));
+      }
       break;
-    }
     default:
       /* Don't fordward queries upstream because of the special nature of this
        * "demuxer", which relies on the upstream element only to be fed with the
        * first playlist */
       break;
   }
-
   return ret;
 }
 
@@ -1308,9 +1295,6 @@ skippy_hls_demux_switch_bitrate (SkippyHLSDemux * demux, SkippyFragment * fragme
 G_GNUC_INTERNAL
 void skippy_hlsdemux_setup (void)
 {
-  GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhlsdemux", 0,
-      "Skippy HLS client");
-
   gst_element_register (NULL, "skippyhlsdemux", GST_RANK_PRIMARY + 100,
       TYPE_SKIPPY_HLS_DEMUX);
 }

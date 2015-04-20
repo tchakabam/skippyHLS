@@ -79,6 +79,7 @@ struct _SkippyHLSDemux
   GRecMutex stream_lock;
 
   /* Position in the stream */
+  GstClockTime duration; // cache for the duration computation of the M3U8 client
   guint64 next_update;
   gboolean end_of_playlist;
   gint download_failed_count;

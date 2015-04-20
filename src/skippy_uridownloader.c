@@ -65,13 +65,7 @@ static GstStaticPadTemplate sinkpadtemplate = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS_ANY);
 
-#define _do_init \
-{ \
-  GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader"); \
-}
-
-G_DEFINE_TYPE_WITH_CODE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_OBJECT,
-    _do_init);
+G_DEFINE_TYPE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_OBJECT);
 
 static void
 skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
@@ -84,6 +78,8 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 
   gobject_class->dispose = skippy_uri_downloader_dispose;
   gobject_class->finalize = skippy_uri_downloader_finalize;
+
+  GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
 
 static void
