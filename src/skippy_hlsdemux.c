@@ -208,7 +208,7 @@ downloader_callback (SkippyUriDownloader* downloader,
   gsize bytes_loaded, gsize bytes_total)
 {
   float percentage = 100.0f * bytes_loaded / bytes_total;
-  GST_DEBUG ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
+  GST_TRACE ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
     (long int) bytes_loaded,
     (long int) bytes_total,
     percentage,
@@ -220,7 +220,8 @@ downloader_callback (SkippyUriDownloader* downloader,
 static void
 skippy_hls_demux_init (SkippyHLSDemux * demux)
 {
-  /* sink pad */
+  // Pads
+  demux->srcpad = NULL;
   demux->sinkpad = gst_pad_new_from_static_template (&sinktemplate, "sink");
   gst_pad_set_chain_function (demux->sinkpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_chain));
@@ -228,23 +229,22 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
       GST_DEBUG_FUNCPTR (skippy_hls_demux_sink_event));
   gst_element_add_pad (GST_ELEMENT (demux), demux->sinkpad);
 
+  // Objects
   demux->playlist = NULL;
-
-  /* Downloader */
+  demux->input_caps = NULL;
+  demux->client = NULL;
   demux->downloader = skippy_uri_downloader_new (downloader_callback);
 
-  /* Properties */
+  // Props
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
   demux->connection_speed = DEFAULT_CONNECTION_SPEED;
   demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
   demux->caching_enabled = DEFAULT_CACHING_ENABLED;
 
-  // Internal flags
-  demux->do_typefind = TRUE;
-  demux->have_group_id = FALSE;
-  demux->group_id = G_MAXUINT;
+  // Internal state
+  skippy_hls_demux_reset (demux, FALSE);
 
-  /* Streamer task */
+  // Thread
   g_rec_mutex_init (&demux->stream_lock);
   demux->stream_task =
       gst_task_new ((GstTaskFunction) skippy_hls_demux_stream_loop, demux, NULL);
@@ -260,6 +260,16 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   demux->do_typefind = TRUE;
   demux->download_failed_count = 0;
   demux->current_download_rate = -1;
+  demux->need_segment = TRUE;
+  demux->discont = FALSE;
+  demux->seeked = FALSE;
+  demux->have_group_id = FALSE;
+  demux->group_id = G_MAXUINT;
+  demux->srcpad_counter = 0;
+  demux->next_update = -1;
+  demux->linked = FALSE;
+
+  gst_segment_init (&demux->segment, GST_FORMAT_TIME);
 
   if (demux->playlist) {
     gst_buffer_unref (demux->playlist);
@@ -280,21 +290,12 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
     demux->client = skippy_m3u8_client_new ("");
   }
 
-  gst_segment_init (&demux->segment, GST_FORMAT_TIME);
-  demux->need_segment = TRUE;
-  demux->discont = TRUE;
-  demux->seeked = FALSE;
-
-  demux->have_group_id = FALSE;
-  demux->group_id = G_MAXUINT;
-
-  demux->srcpad_counter = 0;
-
   if (demux->srcpad) {
     gst_element_remove_pad (GST_ELEMENT_CAST (demux), demux->srcpad);
     demux->srcpad = NULL;
   }
 
+  // Reset downloader (we re-use the object)
   skippy_uri_downloader_reset (demux->downloader);
 }
 
@@ -388,7 +389,8 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   gint current_sequence;
   SkippyM3U8MediaFile *file;
 
-  GST_INFO_OBJECT (demux, "Received GST_EVENT_SEEK");
+  GST_INFO ("Received GST_EVENT_SEEK");
+
   // Not seeking on a live stream
   if (skippy_m3u8_client_is_live (demux->client)) {
     GST_WARNING_OBJECT (demux, "Received seek event for live stream");
@@ -399,9 +401,11 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start,
       &stop_type, &stop);
   if (format != GST_FORMAT_TIME) {
+    GST_WARNING ("Received seek event not in time format");
     gst_event_unref (event);
     return FALSE;
   }
+
   GST_DEBUG_OBJECT (demux, "seek event, rate: %f start: %" GST_TIME_FORMAT
       " stop: %" GST_TIME_FORMAT, rate, GST_TIME_ARGS (start),
       GST_TIME_ARGS (stop));
@@ -687,7 +691,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       gint64 stop = -1;
 
       gst_query_parse_seeking (query, &fmt, NULL, NULL, NULL);
-      GST_INFO_OBJECT (hlsdemux, "Received GST_QUERY_SEEKING with format %d", fmt);
+      GST_DEBUG ("Received GST_QUERY_SEEKING with format %d", fmt);
       if (fmt == GST_FORMAT_TIME) {
         GstClockTime duration;
 
@@ -701,7 +705,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
         GST_INFO_OBJECT (hlsdemux, "GST_QUERY_SEEKING returning with stop : %"
             GST_TIME_FORMAT, GST_TIME_ARGS (stop));
       } else {
-        GST_WARNING ("Can't process seeking query that is not in time format");
+        GST_DEBUG ("Can't process seeking query that is not in time format");
       }
 
       break;
@@ -758,6 +762,11 @@ switch_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
   gchar *stream_id;
   gchar *name;
 
+  if (demux->linked) {
+    GST_WARNING ("Pads already linked !!!");
+    return;
+  }
+
   GST_DEBUG ("Switching pads (oldpad:%p) with caps: %" GST_PTR_FORMAT, oldpad,
       newcaps);
 
@@ -806,6 +815,8 @@ switch_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
     gst_pad_set_active (oldpad, FALSE);
     gst_element_remove_pad (GST_ELEMENT (demux), oldpad);
   }
+
+  demux->linked = TRUE;
 }
 
 static gboolean
@@ -815,6 +826,7 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
   GstBuffer *buf = NULL;
 
   /* Figure out if we need to create/switch pads */
+
   if (G_LIKELY (demux->srcpad)) {
     srccaps = gst_pad_get_current_caps (demux->srcpad);
     GST_DEBUG ("Using existing pad caps");
@@ -830,8 +842,9 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
     buf = skippy_fragment_get_buffer (fragment);
   }
 
-  if (G_UNLIKELY (!srccaps || demux->discont || (buf
-              && GST_BUFFER_IS_DISCONT (buf)))) {
+  if (G_UNLIKELY (!srccaps
+    || demux->discont || (buf && GST_BUFFER_IS_DISCONT (buf)))
+    ) {
     switch_pads (demux, bufcaps);
     demux->need_segment = TRUE;
     demux->discont = FALSE;
@@ -841,6 +854,7 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
 
   if (bufcaps)
     gst_caps_unref (bufcaps);
+
   if (G_LIKELY (srccaps))
     gst_caps_unref (srccaps);
 
@@ -851,6 +865,7 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
     gst_pad_push_event (demux->srcpad, gst_event_new_segment (&demux->segment));
     demux->need_segment = FALSE;
   }
+
   if (buf)
     gst_buffer_unref (buf);
 
