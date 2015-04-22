@@ -2,6 +2,14 @@
 
 ## skippyHLS: A Fresh HTTP Live Streaming Solution
 
+Our HLS solution currently integrates with GStreamer as a demux-style element, similarly to the legacy gst-hlsdemux element that comes with gst-plugins-bad. 
+
+We tried to solve substantial issues that came with the legacy element as robustness towards varying network conditions, connection retrial, handling of expiring media URLs (403s) etc. At the same time we tried to simplifiy some concepts to better target our needs and requirements, while (currently) sticking to the HLS standard.
+
+With a high-speed connection we currently achieve a time-to-play of ~1000 ms, our aim is to achieve as low as 800 ms with further optimizations.
+
+Future developments are looking at improving things further, integrating more tightly with an HTTP client library etc.
+
 ## Dependencies
 
 * GStreamer 1.x (known to work with 1.2 - 1.5)
