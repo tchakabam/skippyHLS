@@ -1,7 +1,9 @@
-/* GStreamer
- * Copyright (C) 2011 Andoni Morales Alastruey <ylatuya@gmail.com>
+/* skippyHLS
  *
- * gstfragment.c:
+ * Copyright (C) 2015, SoundCloud Ltd. (http://soundcloud.com)
+ *  Author: Stephan Hesse <stephan@soundcloud.com>, SoundCloud Ltd.
+ *
+ * skippy_uridownloader.c:
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
