@@ -31,6 +31,13 @@ GST_DEBUG_CATEGORY (uridownloader_debug);
    (G_TYPE_INSTANCE_GET_PRIVATE ((obj), \
     TYPE_SKIPPY_URI_DOWNLOADER, SkippyUriDownloaderPrivate))
 
+enum
+{
+  PROP_0,
+  PROP_CACHE_HIT_COUNT,
+  PROP_CACHE_MISS_COUNT
+};
+
 struct _SkippyUriDownloaderPrivate
 {
   /* Fragments fetcher */
@@ -71,6 +78,32 @@ static GstStaticPadTemplate sinkpadtemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 G_DEFINE_TYPE_WITH_CODE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_OBJECT,
     _do_init);
 
+
+static void
+skippy_uri_downloader_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
+{
+  SkippyUriDownloader *self = SKIPPY_URI_DOWNLOADER (object);
+
+  switch (prop_id) {
+    case PROP_CACHE_HIT_COUNT: {
+        guint64 hits;
+        g_object_get(self->priv->urisrc, "total-cache-hits", &hits, NULL);
+        g_value_set_uint64 (value, hits);
+      }
+      break;
+    case PROP_CACHE_MISS_COUNT: {
+        guint64 misses = 0;
+        g_object_get(self->priv->urisrc, "total-cache-misses", &misses, NULL);
+        g_value_set_uint64 (value, misses);
+      }
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
 static void
 skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 {
@@ -82,6 +115,19 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 
   gobject_class->dispose = skippy_uri_downloader_dispose;
   gobject_class->finalize = skippy_uri_downloader_finalize;
+  gobject_class->get_property = skippy_uri_downloader_get_property;
+
+    g_object_class_install_property (gobject_class,
+                                     PROP_CACHE_HIT_COUNT,
+                                     g_param_spec_uint64 ("total-cache-hits", "Total Cache Hit Count",
+                                                          "Number of cache hits since start", 0, (guint64)-1, 0,
+                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+    g_object_class_install_property (gobject_class,
+                                     PROP_CACHE_MISS_COUNT,
+                                     g_param_spec_uint64 ("total-cache-misses", "Total Cache Miss Count",
+                                                          "Number of cache misses since start", 0, (guint64)-1, 0,
+                                                          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
 }
 
 static void
@@ -152,6 +198,7 @@ skippy_uri_downloader_new (void)
 {
   return g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, NULL);
 }
+
 
 static gboolean
 skippy_uri_downloader_sink_event (GstPad * pad, GstObject * parent,

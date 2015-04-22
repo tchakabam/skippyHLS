@@ -79,6 +79,7 @@ enum
   PROP_CONNECTION_SPEED,
   PROP_CACHING_ENABLED,
   PROP_TOTAL_CACHE_HITS,
+  PROP_TOTAL_CACHE_MISSES,
   PROP_LAST_REQUEST_CACHED,
   PROP_LAST
 };
@@ -206,6 +207,13 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
           0, G_MAXUINT64, 0,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
+  g_object_class_install_property (gobject_class, PROP_TOTAL_CACHE_MISSES,
+      g_param_spec_uint64 ("total-cache-misses",
+          "Total number of cache misses",
+          "Number of cache misses that occured during the hlsdemuxers lifetime.",
+          0, G_MAXUINT64, 0,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
   g_object_class_install_property (gobject_class, PROP_LAST_REQUEST_CACHED,
       g_param_spec_boolean ("last-request-cached", "Last request was cached or not",
         "Returns whether the last executed request was read from cache or not.",
@@ -251,6 +259,9 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->connection_speed = DEFAULT_CONNECTION_SPEED;
   demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
   demux->caching_enabled = DEFAULT_CACHING_ENABLED;
+  demux->cache_hits = 0;
+  demux->cache_misses = 0;
+  demux->last_cached = FALSE;
 
   g_mutex_init (&demux->download_lock);
   g_cond_init (&demux->download_cond);
@@ -296,6 +307,9 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
     case PROP_TOTAL_CACHE_HITS:
       demux->cache_hits = g_value_get_uint64 (value);
       break;
+    case PROP_TOTAL_CACHE_MISSES:
+      demux->cache_misses = g_value_get_uint64 (value);
+      break;
     case PROP_LAST_REQUEST_CACHED:
       demux->last_cached = g_value_get_boolean (value);
       break;
@@ -324,8 +338,17 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_CACHING_ENABLED:
       g_value_set_boolean (value, demux->caching_enabled);
       break;
-    case PROP_TOTAL_CACHE_HITS:
-      g_value_set_uint64 (value, demux->cache_hits);
+    case PROP_TOTAL_CACHE_HITS: {
+        guint64 hits;
+        g_object_get(demux->downloader, "total-cache-hits", &hits, NULL);
+        g_value_set_uint64 (value, hits);
+      }
+      break;
+    case PROP_TOTAL_CACHE_MISSES: {
+        guint64 misses;
+        g_object_get(demux->downloader, "total-cache-misses", &misses, NULL);
+        g_value_set_uint64 (value, misses);
+      }
       break;
     case PROP_LAST_REQUEST_CACHED:
       g_value_set_boolean (value, demux->last_cached);
@@ -1507,6 +1530,8 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
     demux->last_cached = key_fragment->cached;
     if (key_fragment->cached)
       ++(demux->cache_hits);
+    else
+      ++(demux->cache_misses);
   }
 
   key_buffer = skippy_fragment_get_buffer (key_fragment);
@@ -1609,6 +1634,8 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
   demux->last_cached = download->cached;
   if (download->cached) {
     ++(demux->cache_hits);
+  } else {
+    ++(demux->cache_misses);
   }
 
   buffer = skippy_fragment_get_buffer (download);

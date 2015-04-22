@@ -105,6 +105,7 @@ struct _SkippyHLSDemux
 
   /* Number of cache hits since start */
   guint64 cache_hits;
+  guint64 cache_misses;
   gboolean last_cached;
 
   /* Current download rate (bps) */
