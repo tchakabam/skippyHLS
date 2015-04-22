@@ -103,6 +103,10 @@ struct _SkippyHLSDemux
   gchar *key_url;
   SkippyFragment *key_fragment;
 
+  /* Number of cache hits since start */
+  guint64 cache_hits;
+  gboolean last_cached;
+
   /* Current download rate (bps) */
   gint current_download_rate;
 };

@@ -48,6 +48,7 @@ struct _SkippyFragment
   guint64 stop_time;            /* Stop time of the fragment */
   gboolean index;               /* Index of the fragment */
   gboolean discontinuous;       /* Whether this fragment is discontinuous or not */
+  gboolean cached;
 
   SkippyFragmentPrivate *priv;
 };

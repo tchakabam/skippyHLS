@@ -78,6 +78,8 @@ enum
   PROP_BITRATE_LIMIT,
   PROP_CONNECTION_SPEED,
   PROP_CACHING_ENABLED,
+  PROP_TOTAL_CACHE_HITS,
+  PROP_LAST_REQUEST_CACHED,
   PROP_LAST
 };
 
@@ -197,6 +199,18 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
   		  "Enable or disable response caching.",
   		  TRUE, G_PARAM_READWRITE));
 
+  g_object_class_install_property (gobject_class, PROP_TOTAL_CACHE_HITS,
+      g_param_spec_uint64 ("total-cache-hits",
+          "Total number of cache hits",
+          "Number of cache hits that occured during the hlsdemuxers lifetime.",
+          0, G_MAXUINT64, 0,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_class, PROP_LAST_REQUEST_CACHED,
+      g_param_spec_boolean ("last-request-cached", "Last request was cached or not",
+        "Returns whether the last executed request was read from cache or not.",
+        TRUE, G_PARAM_READWRITE));
+
   element_class->change_state = GST_DEBUG_FUNCPTR (skippy_hls_demux_change_state);
 
   gst_element_class_add_pad_template (element_class,
@@ -279,6 +293,12 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
     case PROP_CACHING_ENABLED:
       demux->caching_enabled = g_value_get_boolean (value);
       break;
+    case PROP_TOTAL_CACHE_HITS:
+      demux->cache_hits = g_value_get_uint64 (value);
+      break;
+    case PROP_LAST_REQUEST_CACHED:
+      demux->last_cached = g_value_get_boolean (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -303,6 +323,12 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_CACHING_ENABLED:
       g_value_set_boolean (value, demux->caching_enabled);
+      break;
+    case PROP_TOTAL_CACHE_HITS:
+      g_value_set_uint64 (value, demux->cache_hits);
+      break;
+    case PROP_LAST_REQUEST_CACHED:
+      g_value_set_boolean (value, demux->last_cached);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1477,6 +1503,10 @@ skippy_hls_demux_decrypt_fragment (SkippyHLSDemux * demux,
       goto key_failed;
     demux->key_url = g_strdup (key);
     demux->key_fragment = g_object_ref (key_fragment);
+
+    demux->last_cached = key_fragment->cached;
+    if (key_fragment->cached)
+      ++(demux->cache_hits);
   }
 
   key_buffer = skippy_fragment_get_buffer (key_fragment);
@@ -1574,6 +1604,12 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux,
 
   if (download == NULL)
     goto error;
+  
+  // Update cache hit counter
+  demux->last_cached = download->cached;
+  if (download->cached) {
+    ++(demux->cache_hits);
+  }
 
   buffer = skippy_fragment_get_buffer (download);
   size = gst_buffer_get_size (buffer);

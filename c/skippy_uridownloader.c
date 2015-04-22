@@ -531,8 +531,12 @@ skippy_uri_downloader_fetch_uri_with_range (SkippyUriDownloader *
     GST_ERROR_OBJECT (downloader, "Didn't retrieve a buffer before EOS");
   }
 
-  if (download != NULL)
+  if (download != NULL) {
+    if (g_object_class_find_property (G_OBJECT_GET_CLASS (downloader->priv->urisrc), "last-request-cached")) {
+      g_object_get(downloader->priv->urisrc, "last-request-cached", &download->cached, NULL);
+    }
     GST_INFO_OBJECT (downloader, "URI fetched successfully");
+  }
   else
     GST_INFO_OBJECT (downloader, "Error fetching URI");
 
