@@ -69,5 +69,8 @@ To register the plugin to the GStreamer core element factory, call the `skippy_h
 
 We're happy about useful pull-requests!
 
+## What about non-GStreamer things?
+
+We currently tightly integrate with GStreamer as a multimedia framework. Future will show if it makes sense to decouple the implementation further from the integration glue-code (our framework-scope would then become GLib) and enable us to integrate with further multimedia frameworks as VideoLAN (VLC player), Google/Android ExoPlayer, Windows stuff, etc ... Sticking to GLib might enable mixed usage of C with [Vala](https://wiki.gnome.org/Projects/Vala) in the project as a modern very-high level functional language.
 
 
