@@ -1,7 +1,9 @@
-/* GStreamer
- * Copyright (C) 2010 Marc-Andre Lureau <marcandre.lureau@gmail.com>
+/* skippyHLS
  *
- * m3u8.c:
+ * Copyright (C) 2015, SoundCloud Ltd. (http://soundcloud.com)
+ *  Author: Stephan Hesse <stephan@soundcloud.com>, SoundCloud Ltd.
+ *
+ * skippy_hlsdemux.c:
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -19,7 +21,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
- #include "skippy_m3u8.h"
+ #include "skippyhls/skippy_m3u8.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -27,8 +29,10 @@
 #include <glib.h>
 #include <string.h>
 
-//GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
-//#define GST_CAT_DEFAULT skippy_m3u8_debug
+GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
+#define GST_CAT_DEFAULT skippy_m3u8_debug
+
+static GOnce init_once = G_ONCE_INIT;
 
 static SkippyM3U8 *skippy_m3u8_new (void);
 static void skippy_m3u8_free (SkippyM3U8 * m3u8);
@@ -37,15 +41,21 @@ static gboolean skippy_m3u8_update (SkippyM3U8 * m3u8, gchar * data,
 static SkippyM3U8MediaFile *skippy_m3u8_media_file_new (gchar * uri,
     gchar * title, GstClockTime duration, guint sequence);
 static void skippy_m3u8_media_file_free (SkippyM3U8MediaFile * self);
-gchar *uri_join (const gchar * uri, const gchar * path);
+
+static gchar *uri_join (const gchar * uri, const gchar * path);
+
+static gpointer
+skippy_m3u8_init_once (gpointer user_data)
+{
+  GST_DEBUG_CATEGORY_INIT (skippy_m3u8_debug, "skippyhls-m3u8", 0, "M3U8 client");
+  return NULL;
+}
 
 static SkippyM3U8 *
 skippy_m3u8_new (void)
 {
   SkippyM3U8 *m3u8;
-
   m3u8 = g_new0 (SkippyM3U8, 1);
-
   return m3u8;
 }
 
@@ -548,6 +558,8 @@ skippy_m3u8_update (SkippyM3U8 * self, gchar * data, gboolean * updated)
 SkippyM3U8Client *
 skippy_m3u8_client_new (const gchar * uri)
 {
+  g_once (&init_once, skippy_m3u8_init_once, NULL);
+
   SkippyM3U8Client *client;
 
   g_return_val_if_fail (uri != NULL, NULL);
@@ -557,7 +569,6 @@ skippy_m3u8_client_new (const gchar * uri)
   client->current = NULL;
   client->sequence = -1;
   client->sequence_position = 0;
-  client->update_failed_count = 0;
   g_mutex_init (&client->lock);
   skippy_m3u8_set_uri (client->main, g_strdup (uri));
 
@@ -582,7 +593,6 @@ skippy_m3u8_client_set_current (SkippyM3U8Client * self, SkippyM3U8 * m3u8)
   SKIPPY_M3U8_CLIENT_LOCK (self);
   if (m3u8 != self->current) {
     self->current = m3u8;
-    self->update_failed_count = 0;
   }
   SKIPPY_M3U8_CLIENT_UNLOCK (self);
 }
@@ -603,7 +613,6 @@ skippy_m3u8_client_update (SkippyM3U8Client * self, gchar * data)
     goto out;
 
   if (!updated) {
-    self->update_failed_count++;
     goto out;
   }
 
@@ -649,14 +658,12 @@ _find_next (SkippyM3U8MediaFile * file, SkippyM3U8Client * client)
   return TRUE;
 }
 
-gboolean
-skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
-    gboolean * discontinuity, const gchar ** uri, GstClockTime * duration,
-    GstClockTime * timestamp, gint64 * range_start, gint64 * range_end,
-    const gchar ** key, const guint8 ** iv)
+SkippyFragment*
+skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client)
 {
   GList *l;
   SkippyM3U8MediaFile *file;
+  SkippyFragment* fragment;
 
   g_return_val_if_fail (client != NULL, FALSE);
   g_return_val_if_fail (client->current != NULL, FALSE);
@@ -667,33 +674,23 @@ skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client,
       (GCompareFunc) _find_next);
   if (l == NULL) {
     SKIPPY_M3U8_CLIENT_UNLOCK (client);
-    return FALSE;
+    return NULL;
   }
 
   file = SKIPPY_M3U8_MEDIA_FILE (l->data);
   GST_DEBUG ("Got fragment with sequence %u (client sequence %u)",
       file->sequence, client->sequence);
 
-  if (timestamp)
-    *timestamp = client->sequence_position;
-
-  if (discontinuity)
-    *discontinuity = client->sequence != file->sequence || file->discont;
-  if (uri)
-    *uri = file->uri;
-  if (duration)
-    *duration = file->duration;
-  if (range_start)
-    *range_start = file->offset;
-  if (range_end)
-    *range_end = file->size != -1 ? file->offset + file->size - 1 : -1;
-  if (key)
-    *key = file->key;
-  if (iv)
-    *iv = file->iv;
+  fragment = skippy_fragment_new (file->uri, file->key, file->iv);
+  fragment->start_time = client->sequence_position;
+  fragment->stop_time = client->sequence_position + file->duration;
+  fragment->duration = file->duration;
+  fragment->discontinuous = client->sequence != file->sequence || file->discont;
+  fragment->range_start = file->offset;
+  fragment->range_end = file->size != -1 ? file->offset + file->size - 1 : -1;
 
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
-  return TRUE;
+  return fragment;
 }
 
 void
@@ -738,11 +735,16 @@ skippy_m3u8_client_get_duration (SkippyM3U8Client * client)
   SKIPPY_M3U8_CLIENT_LOCK (client);
   /* We can only get the duration for on-demand streams */
   if (!client->current || !client->current->endlist) {
+    GST_WARNING ("Can't determine playlist duration");
     SKIPPY_M3U8_CLIENT_UNLOCK (client);
     return GST_CLOCK_TIME_NONE;
   }
+
   if (client->current->files)
     g_list_foreach (client->current->files, (GFunc) _sum_duration, &duration);
+
+  GST_DEBUG ("Determined M3U8 duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (duration));
+
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return duration;
 }
@@ -815,7 +817,7 @@ skippy_m3u8_client_is_live (SkippyM3U8Client * client)
   return ret;
 }
 
-GList *
+SkippyM3U8 *
 skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate)
 {
   GList *list, *current_variant;
@@ -839,7 +841,18 @@ skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bi
   }
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
 
-  return current_variant;
+  return SKIPPY_M3U8 (current_variant->data);
+}
+
+SkippyM3U8 *
+skippy_m3u8_client_get_current_variant (SkippyM3U8Client * self)
+{
+  GList* variant;
+  SKIPPY_M3U8_CLIENT_LOCK (self);
+  variant = self->main->current_variant->data;
+  SKIPPY_M3U8_CLIENT_UNLOCK (self);
+
+  return SKIPPY_M3U8 (variant->data);
 }
 
 gchar *
@@ -919,3 +932,87 @@ skippy_m3u8_client_get_current_fragment_duration (SkippyM3U8Client * client)
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return dur;
 }
+
+void
+skippy_m3u8_client_update_playlist_position (SkippyM3U8Client * client, guint64 target_pos, gboolean* need_segment)
+{
+  GstClockTime current_pos;
+  guint sequence, last_sequence = 0;
+  GList *walk;
+  SkippyM3U8MediaFile *file;
+
+  /* If it's a live source, do not let the sequence number go beyond
+   * three fragments before the end of the list */
+  if (client->current && skippy_m3u8_client_is_live (client)) {
+    SKIPPY_M3U8_CLIENT_LOCK (client);
+    last_sequence =
+        SKIPPY_M3U8_MEDIA_FILE (g_list_last (client->current->files)->
+        data)->sequence;
+
+    if (client->sequence >= last_sequence - 3) {
+      GST_DEBUG_OBJECT (client, "Sequence is beyond playlist. Moving back to %d",
+          last_sequence - 3);
+      *need_segment = TRUE;
+      client->sequence = last_sequence - 3;
+    }
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
+  } else if (client->current && !skippy_m3u8_client_is_live (client)) {
+    /* Sequence numbers are not guaranteed to be the same in different
+     * playlists, so get the correct fragment here based on the current
+     * position
+     */
+    SKIPPY_M3U8_CLIENT_LOCK (client);
+    current_pos = 0;
+    for (walk = client->current->files; walk; walk = walk->next) {
+      file = walk->data;
+      sequence = file->sequence;
+      if (current_pos <= target_pos
+          && target_pos < current_pos + file->duration) {
+        break;
+      }
+      current_pos += file->duration;
+    }
+    /* End of playlist */
+    if (!walk)
+      sequence++;
+    client->sequence = sequence;
+    client->sequence_position = current_pos;
+    SKIPPY_M3U8_CLIENT_UNLOCK (client);
+  }
+}
+
+static gchar *
+buf_to_utf8_playlist (GstBuffer * buf)
+{
+  GstMapInfo info;
+  gchar *playlist;
+
+  if (!gst_buffer_map (buf, &info, GST_MAP_READ)) {
+    return NULL;
+  }
+
+  if (!g_utf8_validate ((gchar *) info.data, info.size, NULL)) {
+    gst_buffer_unmap (buf, &info);
+    return NULL;
+  }
+
+  /* alloc size + 1 to end with a null character */
+  playlist = g_malloc0 (info.size + 1);
+  memcpy (playlist, info.data, info.size);
+
+  gst_buffer_unmap (buf, &info);
+  return playlist;
+}
+
+gboolean
+skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, GstBuffer* playlist_buffer)
+{
+  gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
+  if (playlist == NULL) {
+    GST_WARNING ("Error converting playlist from raw buffer to UTF8");
+  } else if (!skippy_m3u8_client_update (client, playlist)) {
+    return FALSE;
+  }
+  return TRUE;
+}
+
