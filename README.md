@@ -8,7 +8,7 @@ We tried to solve substantial issues that came with the legacy element as robust
 
 With a high-speed connection we currently achieve a time-to-play of ~1000 ms, our aim is to achieve as low as 800 ms with further optimizations.
 
-Future developments are looking at improving things further, integrating more tightly with an HTTP client library etc, further improvements in architecture and smarter design, as well as possible performance improvement (parse playlist during load, push segments while loading, download segments concurrently etc..)
+Future developments are looking at improving things further, integrating more tightly with an HTTP client library etc, further improvements in architecture and smarter design, as well as possible performance improvements: parse playlist during load, push segments while loading, download segments concurrently etc.
 
 ## Dependencies
 
