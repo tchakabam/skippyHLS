@@ -35,7 +35,6 @@ GST_DEBUG_CATEGORY (uridownloader_debug);
 
 enum
 {
-  PROP_0,
   PROP_CACHE_HIT_COUNT,
   PROP_CACHE_MISS_COUNT
 };
