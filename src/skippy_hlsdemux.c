@@ -41,7 +41,7 @@
 
 #include <string.h>
 
-#include <skippyhls/skippy_hlsdemux.h>
+#include <skippyHLS/skippy_hlsdemux.h>
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
