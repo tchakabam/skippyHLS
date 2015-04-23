@@ -1018,12 +1018,10 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     break;
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
     g_return_if_fail (!err);
-    g_return_if_fail (!fragment);
     GST_DEBUG ("Fragment fetch got cancelled on purpose");
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
     g_return_if_fail (err);
-    g_return_if_fail (!fragment);
     // When failed
     GST_ERROR ("Fragment fetch error: %s", err->message);
     // Actual download failure
