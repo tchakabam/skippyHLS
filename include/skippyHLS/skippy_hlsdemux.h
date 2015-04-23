@@ -55,19 +55,15 @@ struct _SkippyHLSDemux
 {
   GstElement parent;
 
+  /* Pads */
   GstPad *sinkpad;
   GstPad *srcpad;
-  gint srcpad_counter;
 
-  gboolean have_group_id;
-  guint group_id;
-
-  GstBuffer *playlist;
+  /* Member objects */
+  GstBuffer* playlist;
   GstCaps *input_caps;
   SkippyUriDownloader *downloader;
-  gchar *uri;                   /* Original playlist URI */
-  SkippyM3U8Client *client;        /* M3U8 client */
-  gboolean do_typefind;         /* Whether we need to typefind the next buffer */
+  SkippyM3U8Client *client;     /* M3U8 client */
 
   /* Properties */
   guint buffer_ahead_duration_secs;
@@ -78,30 +74,21 @@ struct _SkippyHLSDemux
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
-  gboolean stop_stream_task;
-  GMutex download_lock;         /* Used for protecting queue and the two conds */
-  GCond download_cond;          /* Signalled when something is added to the queue */
+
+  /* Internal state */
+  GstClockTime duration; // cache for the duration computation of the M3U8 client
+  gint srcpad_counter;
+  gboolean have_group_id;
+  guint group_id;
+  guint64 next_update;
   gboolean end_of_playlist;
   gint download_failed_count;
-  gint64 next_download;
-
-  /* Updates task */
-  GstTask *updates_task;
-  GRecMutex updates_lock;
-  gint64 next_update;           /* Time of the next update */
-  gboolean stop_updates_task;
-  GMutex updates_timed_lock;
-  GCond updates_timed_cond;     /* Signalled when the playlist should be updated */
-
-  /* Position in the stream */
+  gboolean do_typefind;         /* Whether we need to typefind the next buffer */
   GstSegment segment;
   gboolean need_segment;
   gboolean discont;
   gboolean seeked;
-
-  /* Cache for the last key */
-  gchar *key_url;
-  SkippyFragment *key_fragment;
+  gboolean linked;
 
   /* Number of cache hits since start */
   guint64 cache_hits;
