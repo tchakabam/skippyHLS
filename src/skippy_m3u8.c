@@ -21,7 +21,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
- #include "skippyhls/skippy_m3u8.h"
+ #include "skippyHLS/skippy_m3u8.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -937,7 +937,7 @@ void
 skippy_m3u8_client_update_playlist_position (SkippyM3U8Client * client, guint64 target_pos, gboolean* need_segment)
 {
   GstClockTime current_pos;
-  guint sequence, last_sequence = 0;
+  guint sequence = 0, last_sequence = 0;
   GList *walk;
   SkippyM3U8MediaFile *file;
 
