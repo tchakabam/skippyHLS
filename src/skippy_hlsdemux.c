@@ -65,7 +65,6 @@ enum
   PROP_CACHING_ENABLED,
   PROP_TOTAL_CACHE_HITS,
   PROP_TOTAL_CACHE_MISSES,
-  PROP_LAST_REQUEST_CACHED,
   PROP_LAST
 };
 
@@ -196,11 +195,6 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
           "Number of cache misses that occured during the hlsdemuxers lifetime.",
           0, G_MAXUINT64, 0,
           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-
-  g_object_class_install_property (gobject_class, PROP_LAST_REQUEST_CACHED,
-      g_param_spec_boolean ("last-request-cached", "Last request was cached or not",
-        "Returns whether the last executed request was read from cache or not.",
-        TRUE, G_PARAM_READABLE));
 
   element_class->change_state = GST_DEBUG_FUNCPTR (skippy_hls_demux_change_state);
 
