@@ -35,6 +35,7 @@ GST_DEBUG_CATEGORY (uridownloader_debug);
 
 enum
 {
+  PROP_0,
   PROP_CACHE_HIT_COUNT,
   PROP_CACHE_MISS_COUNT
 };
@@ -75,24 +76,28 @@ static GstStaticPadTemplate sinkpadtemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 
 G_DEFINE_TYPE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_OBJECT);
 
+static gboolean forward_uint64_property (GstElement* src, const char* prop_name, GValue* value) {
+  if (src != NULL && g_object_class_find_property (G_OBJECT_GET_CLASS(src), prop_name)) {
+    guint64 val;
+    g_object_get(src, prop_name, &val, NULL);
+    g_value_set_uint64 (value, val);
+    return TRUE;
+  }
+  GST_DEBUG_OBJECT(src, "Object has no %s property!", prop_name);
+  return FALSE;
+}
+
 static void
 skippy_uri_downloader_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec)
 {
   SkippyUriDownloader *self = SKIPPY_URI_DOWNLOADER (object);
-
   switch (prop_id) {
-    case PROP_CACHE_HIT_COUNT: {
-        guint64 hits;
-        g_object_get(self->priv->urisrc, "total-cache-hits", &hits, NULL);
-        g_value_set_uint64 (value, hits);
-      }
+    case PROP_CACHE_HIT_COUNT:
+      forward_uint64_property(self->priv->urisrc, "total-cache-hits", value);
       break;
-    case PROP_CACHE_MISS_COUNT: {
-        guint64 misses = 0;
-        g_object_get(self->priv->urisrc, "total-cache-misses", &misses, NULL);
-        g_value_set_uint64 (value, misses);
-      }
+    case PROP_CACHE_MISS_COUNT:
+      forward_uint64_property(self->priv->urisrc, "total-cache-misses", value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);

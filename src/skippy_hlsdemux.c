@@ -346,6 +346,17 @@ skippy_hls_demux_set_property (GObject * object, guint prop_id,
   }
 }
 
+static gboolean forward_uint64_property (SkippyUriDownloader* src, const char* prop_name, GValue* value) {
+  if (src != NULL) {
+    guint64 val;
+    g_object_get(src, prop_name, &val, NULL);
+    g_value_set_uint64 (value, val);
+    return TRUE;
+  }
+  GST_DEBUG_OBJECT(src, "Object has no %s property!", prop_name);
+  return FALSE;
+}
+
 static void
 skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
     GParamSpec * pspec)
@@ -365,20 +376,11 @@ skippy_hls_demux_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_CACHING_ENABLED:
       g_value_set_boolean (value, demux->caching_enabled);
       break;
-    case PROP_TOTAL_CACHE_HITS: {
-        guint64 hits;
-        g_object_get(demux->downloader, "total-cache-hits", &hits, NULL);
-        g_value_set_uint64 (value, hits);
-      }
+    case PROP_TOTAL_CACHE_HITS: 
+      forward_uint64_property(demux->downloader, "total-cache-hits", value);
       break;
-    case PROP_TOTAL_CACHE_MISSES: {
-        guint64 misses;
-        g_object_get(demux->downloader, "total-cache-misses", &misses, NULL);
-        g_value_set_uint64 (value, misses);
-      }
-      break;
-    case PROP_LAST_REQUEST_CACHED:
-      g_value_set_boolean (value, demux->last_cached);
+    case PROP_TOTAL_CACHE_MISSES:
+      forward_uint64_property(demux->downloader, "total-cache-misses", value);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
