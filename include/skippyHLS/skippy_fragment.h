@@ -55,7 +55,6 @@ struct _SkippyFragment
   guint64 duration;              /* Media fragment duration */
   gboolean index;                /* Index of the fragment */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
-  gboolean cached;
   gboolean decrypted;
 
   SkippyFragmentPrivate *priv;

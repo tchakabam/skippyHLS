@@ -84,7 +84,6 @@ skippy_fragment_init (SkippyFragment * fragment)
   fragment->completed = FALSE;
   fragment->cancelled = FALSE;
   fragment->discontinuous = FALSE;
-  fragment->cached = FALSE;
   fragment->decrypted = TRUE;
 }
 
