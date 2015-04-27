@@ -755,6 +755,7 @@ skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client)
   GstClockTime duration = 0;
 
   g_return_val_if_fail (client != NULL, GST_CLOCK_TIME_NONE);
+  g_return_val_if_fail (client->current != NULL, GST_CLOCK_TIME_NONE);
 
   SKIPPY_M3U8_CLIENT_LOCK (client);
   duration = client->current->targetduration;
@@ -1010,6 +1011,7 @@ skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, GstBuffer* playlist
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
   if (playlist == NULL) {
     GST_WARNING ("Error converting playlist from raw buffer to UTF8");
+    return FALSE;
   } else if (!skippy_m3u8_client_update (client, playlist)) {
     return FALSE;
   }
