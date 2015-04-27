@@ -948,7 +948,6 @@ skippy_m3u8_client_update_playlist_position (SkippyM3U8Client * client, guint64 
     last_sequence =
         SKIPPY_M3U8_MEDIA_FILE (g_list_last (client->current->files)->
         data)->sequence;
-
     if (client->sequence >= last_sequence - 3) {
       GST_DEBUG_OBJECT (client, "Sequence is beyond playlist. Moving back to %d",
           last_sequence - 3);

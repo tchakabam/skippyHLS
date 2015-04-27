@@ -58,11 +58,11 @@ struct _SkippyHLSDemux
   /* Pads */
   GstPad *sinkpad;
   GstPad *srcpad;
+  GstPad *queue_sinkpad;
 
   /* Member objects */
   GstElement* queue;
   GstBuffer* playlist;
-  GstCaps *input_caps;
   SkippyUriDownloader *downloader;
   SkippyM3U8Client *client;     /* M3U8 client */
 
@@ -77,17 +77,14 @@ struct _SkippyHLSDemux
   GRecMutex stream_lock;
 
   /* Internal state */
+  GstSegment segment;
   GstClockTime duration; // cache for the duration computation of the M3U8 client
   gint srcpad_counter;
   gboolean have_group_id;
   guint group_id;
   guint64 next_update;
-  gboolean end_of_playlist;
   gint download_failed_count;
-  gboolean do_typefind;         /* Whether we need to typefind the next buffer */
-  GstSegment segment;
   gboolean need_segment;
-  gboolean discont;
   gboolean seeked;
   gboolean linked;
 

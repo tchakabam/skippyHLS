@@ -137,6 +137,10 @@ skippy_hls_demux_dispose (GObject * obj)
     demux->downloader = NULL;
   }
 
+  if (demux->queue_sinkpad) {
+    gst_object_unref (demux->queue_sinkpad);
+  }
+
   G_OBJECT_CLASS (parent_class)->dispose (obj);
 }
 
@@ -219,6 +223,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   // Pads
   demux->srcpad = NULL;
   demux->sinkpad = gst_pad_new_from_static_template (&sinktemplate, "sink");
+
   gst_pad_set_chain_function (demux->sinkpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_chain));
   gst_pad_set_event_function (demux->sinkpad,
@@ -227,10 +232,13 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
 
   // Objects
   demux->playlist = NULL;
-  demux->input_caps = NULL;
   demux->client = NULL;
   demux->queue = gst_element_factory_make ("queue2", NULL);
+  demux->queue_sinkpad = gst_element_get_static_pad (demux->queue, "sink");
   demux->downloader = skippy_uri_downloader_new (downloader_callback);
+
+  // Add bin elements
+  gst_bin_add (GST_BIN (demux), demux->queue);
 
   // Props
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
@@ -246,6 +254,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->stream_task =
       gst_task_new ((GstTaskFunction) skippy_hls_demux_stream_loop, demux, NULL);
   gst_task_set_lock (demux->stream_task, &demux->stream_lock);
+
 }
 
 static void
@@ -253,13 +262,10 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
 {
   GST_DEBUG ("Re-setting element: (dispose=%d)", (int) dispose);
 
-  demux->end_of_playlist = FALSE;
   demux->duration = GST_CLOCK_TIME_NONE;
-  demux->do_typefind = TRUE;
   demux->download_failed_count = 0;
   demux->current_download_rate = -1;
   demux->need_segment = TRUE;
-  demux->discont = FALSE;
   demux->seeked = FALSE;
   demux->have_group_id = FALSE;
   demux->group_id = G_MAXUINT;
@@ -272,11 +278,6 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   if (demux->playlist) {
     gst_buffer_unref (demux->playlist);
     demux->playlist = NULL;
-  }
-
-  if (demux->input_caps) {
-    gst_caps_unref (demux->input_caps);
-    demux->input_caps = NULL;
   }
 
   if (demux->client) {
@@ -354,11 +355,14 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   GstStateChangeReturn ret;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
 
+  GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
+    gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
+
   switch (transition) {
     case GST_STATE_CHANGE_NULL_TO_READY:
       skippy_hls_demux_reset (demux, FALSE);
       break;
-    case GST_STATE_CHANGE_PAUSED_TO_READY:
+    case GST_STATE_CHANGE_READY_TO_NULL:
       skippy_uri_downloader_cancel (demux->downloader);
       skippy_hls_demux_stop (demux);
       skippy_hls_demux_reset (demux, FALSE);
@@ -367,9 +371,9 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
   }
 
+  GST_DEBUG ("Calling parent class state change handler ...");
   ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
-
-  GST_DEBUG ("State change return: %d", ret);
+  GST_DEBUG ("State transition result: %s", gst_element_state_change_return_get_name (ret));
 
   return ret;
 }
@@ -436,7 +440,7 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
     GST_DEBUG_OBJECT (demux, "sending flush start");
-    gst_pad_push_event (demux->srcpad, gst_event_new_flush_start ());
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
   }
 
   // Pausing streaming task
@@ -458,7 +462,7 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Flush stop
   if (flags & GST_SEEK_FLAG_FLUSH) {
     GST_DEBUG_OBJECT (demux, "sending flush stop");
-    gst_pad_push_event (demux->srcpad, gst_event_new_flush_stop (TRUE));
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
   }
 
   // Restart the streaming task
@@ -746,31 +750,22 @@ skippy_hls_demux_stop (SkippyHLSDemux * demux)
 static void
 skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
 {
-  GstPad *oldpad = demux->srcpad;
   GstEvent *event;
-  GstPad *queue_srcpad, *queue_sinkpad;
   gchar *stream_id;
+  GstPad *queue_srcpad;
   gchar *name;
-  GstPadTemplate* templ = gst_static_pad_template_get (&srctemplate);
+  GstPadTemplate* templ;
 
-  if (demux->linked) {
-    GST_DEBUG ("Pads already linked");
-    return;
-  }
+  GST_DEBUG ("Linking pads with caps: %" GST_PTR_FORMAT, newcaps);
 
-  GST_DEBUG ("Linking pads (oldpad:%p) with caps: %" GST_PTR_FORMAT, oldpad,
-      newcaps);
-
-  /* First create and activate new source pad pad */
+  // Create and activate new source pad
   name = g_strdup_printf ("src_%u", demux->srcpad_counter++);
-  demux->srcpad = gst_ghost_pad_new_no_target_from_template (name, templ);
-  gst_object_unref (templ);
-  g_free (name);
-
-  // Link queue src to external source pad
+  templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
-  gst_ghost_pad_set_target (GST_GHOST_PAD (demux->srcpad), queue_srcpad);
+  demux->srcpad = gst_ghost_pad_new_from_template (name, queue_srcpad, templ);
+  gst_object_unref (templ);
   gst_object_unref (queue_srcpad);
+  g_free (name);
 
   gst_pad_set_event_function (demux->srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_event));
@@ -778,10 +773,11 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_query));
   gst_pad_use_fixed_caps (demux->srcpad);
   gst_pad_set_active (demux->srcpad, TRUE);
+  gst_pad_set_caps (demux->srcpad, newcaps);
+  gst_element_add_pad (GST_ELEMENT (demux), demux->srcpad);
+  gst_element_no_more_pads (GST_ELEMENT (demux));
 
-  stream_id =
-      gst_pad_create_stream_id (demux->srcpad, GST_ELEMENT_CAST (demux), NULL);
-
+  stream_id = gst_pad_create_stream_id (demux->srcpad, GST_ELEMENT_CAST (demux), NULL);
   event = gst_pad_get_sticky_event (demux->sinkpad, GST_EVENT_STREAM_START, 0);
   if (event) {
     if (gst_event_parse_group_id (event, &demux->group_id))
@@ -794,26 +790,11 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
     demux->group_id = gst_util_group_id_next ();
   }
   event = gst_event_new_stream_start (stream_id);
-  if (demux->have_group_id)
+  if (demux->have_group_id) {
     gst_event_set_group_id (event, demux->group_id);
-
-  gst_pad_push_event (demux->srcpad, event);
-  g_free (stream_id);
-
-  if (newcaps != NULL)
-    gst_pad_set_caps (demux->srcpad, newcaps);
-
-  gst_element_add_pad (GST_ELEMENT (demux), demux->srcpad);
-  gst_element_no_more_pads (GST_ELEMENT (demux));
-
-  if (oldpad) {
-    /* Push out EOS */
-    gst_pad_push_event (oldpad, gst_event_new_eos ());
-    gst_pad_set_active (oldpad, FALSE);
-    gst_element_remove_pad (GST_ELEMENT (demux), oldpad);
   }
-
-  demux->linked = TRUE;
+  gst_pad_send_event (demux->queue_sinkpad, event);
+  g_free (stream_id);
 }
 
 // FIXME: Refactor this
@@ -823,49 +804,45 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
   GstCaps *bufcaps = NULL, *srccaps = NULL;
   GstBuffer *buf = NULL;
 
-  /* Figure out if we need to create/switch pads */
+  // Get buffer and caps from fragment
+  buf = skippy_fragment_get_buffer (fragment);
+  if (G_UNLIKELY (!buf)) {
+    return FALSE;
+  }
+  bufcaps = skippy_fragment_get_caps (fragment);
+  if (G_UNLIKELY (!bufcaps)) {
+    return FALSE;
+  }
 
+  // Here we configure the pad caps in order to tell downstream elements
+  // about what data were pushing
   if (G_LIKELY (demux->srcpad)) {
     srccaps = gst_pad_get_current_caps (demux->srcpad);
     GST_DEBUG ("Using existing pad caps");
   }
 
-  if (fragment) {
-    bufcaps = skippy_fragment_get_caps (fragment);
-    if (G_UNLIKELY (!bufcaps)) {
-      if (srccaps)
-        gst_caps_unref (srccaps);
-      return FALSE;
-    }
-    buf = skippy_fragment_get_buffer (fragment);
-  }
-
-  if (G_UNLIKELY (!srccaps
-    || demux->discont || (buf && GST_BUFFER_IS_DISCONT (buf)))
-    ) {
+  // If we have no caps yet, or if there is a discontinuity
+  // we need to relink/reconfigure the source pads
+  if (G_UNLIKELY(!demux->linked)) {
     skippy_hls_demux_link_pads (demux, bufcaps);
+    // Flag the buffer as discont' if we just initialized the pad
+    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
+    // Set flags
+    demux->linked = TRUE;
     demux->need_segment = TRUE;
-    demux->discont = FALSE;
-    if (buf)
-      GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
   }
 
-  if (bufcaps)
-    gst_caps_unref (bufcaps);
-
-  if (G_LIKELY (srccaps))
-    gst_caps_unref (srccaps);
-
+  // Send a segment event if needed
   if (demux->need_segment) {
-    /* And send a new segment */
-    GST_DEBUG_OBJECT (demux, "Sending segment event: %"
-        GST_SEGMENT_FORMAT, &demux->segment);
-    gst_pad_push_event (demux->srcpad, gst_event_new_segment (&demux->segment));
+    GST_DEBUG_OBJECT (demux, "Sending segment event: %" GST_SEGMENT_FORMAT,
+      &demux->segment);
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_segment (&demux->segment));
     demux->need_segment = FALSE;
   }
 
-  if (buf)
-    gst_buffer_unref (buf);
+  gst_caps_unref (bufcaps);
+  gst_caps_unref (srccaps);
+  gst_buffer_unref (buf);
 
   return TRUE;
 }
@@ -874,9 +851,8 @@ static void
 skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
 {
   GST_DEBUG_OBJECT (demux, "Reached end of playlist, sending EOS");
-  demux->end_of_playlist = TRUE;
   skippy_hls_demux_configure_src_pad (demux, NULL);
-  gst_pad_push_event (demux->srcpad, gst_event_new_eos ());
+  gst_pad_push_event (demux->queue_sinkpad, gst_event_new_eos ());
   skippy_hls_demux_pause_tasks (demux);
 }
 
@@ -886,48 +862,13 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
   GstBuffer* buf;
   GstFlowReturn ret;
   GstCaps *caps;
-  GstPad* queue_sinkpad;
-
-  if (!skippy_hls_demux_configure_src_pad (demux, fragment)) {
-    GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND,
-        ("Could not determine type of stream"), (NULL));
-    return FALSE;
-  }
 
   buf = skippy_fragment_get_buffer (fragment);
 
   GST_DEBUG_OBJECT (demux, "Pushing buffer %" GST_TIME_FORMAT,
       GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)));
 
-  // Perform typefind if necessary
-  if (G_UNLIKELY (demux->do_typefind)) {
-
-    GST_DEBUG ("Doing typefind");
-
-    caps = skippy_fragment_get_caps (fragment);
-
-    GST_DEBUG_OBJECT (demux, "Fragment caps: %" GST_PTR_FORMAT, caps);
-
-    if (G_UNLIKELY (!caps)) {
-      GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND,
-          ("Could not determine type of stream"), (NULL));
-      gst_buffer_unref (buf);
-      return FALSE;
-    }
-
-    if (!demux->input_caps || !gst_caps_is_equal (caps, demux->input_caps)) {
-      gst_caps_replace (&demux->input_caps, caps);
-      /* gst_pad_set_caps (demux->srcpad, demux->input_caps); */
-      GST_INFO_OBJECT (demux, "Input source caps: %" GST_PTR_FORMAT,
-          demux->input_caps);
-      demux->do_typefind = FALSE;
-    }
-    gst_caps_unref (caps);
-  } else {
-    skippy_fragment_set_caps (fragment, demux->input_caps);
-  }
-
-  /* Flagging buffer as discontinuous */
+  // Flagging buffer as discontinuous if necessary
   if (fragment->discontinuous) {
     GST_DEBUG_OBJECT (demux, "Marking fragment as discontinuous");
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
@@ -935,23 +876,29 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
     GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
   }
 
+  // Re-configure source pad if necessary (check for available caps)
+  if (!skippy_hls_demux_configure_src_pad (demux, fragment)) {
+    GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND, ("Could not determine type of stream"), (NULL));
+    gst_buffer_unref (buf);
+    return FALSE;
+  }
+
   // Updating current data segment properties
   demux->segment.position = GST_BUFFER_TIMESTAMP (buf);
   demux->seeked = FALSE;
-  if (demux->segment.rate > 0)
+  if (demux->segment.rate > 0) {
     demux->segment.position += GST_BUFFER_DURATION (buf);
+  }
 
-  /* Push buffer */
+  // Push the buffer onto the queue
   GST_DEBUG ("Enter pad chain function");
-  queue_sinkpad = gst_element_get_static_pad (demux->queue, "sink");
-  ret = gst_pad_chain (queue_sinkpad, buf);
-  gst_object_unref (queue_sinkpad);
+  ret = gst_pad_chain (demux->queue_sinkpad, buf);
   GST_DEBUG ("Exit pad chain function");
   if (ret != GST_FLOW_OK) {
     if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_EOS) {
       GST_ELEMENT_ERROR (demux, STREAM, FAILED, (NULL),
           ("Error pushing buffer (will send EOS): %s", gst_flow_get_name (ret)));
-      gst_pad_push_event (demux->srcpad, gst_event_new_eos ());
+      gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
     } else {
       GST_WARNING_OBJECT (demux, "Can't push buffer because: %s", gst_flow_get_name (ret));
     }
@@ -1005,8 +952,15 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyFragment *fragment;
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
+  GstState current_state, pending_state;
 
   GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");
+
+  gst_element_get_state (GST_ELEMENT(demux), &current_state, &pending_state, GST_CLOCK_TIME_NONE);
+
+  GST_DEBUG ("Current state: %s, Pending state: %s",
+    gst_element_state_get_name (current_state),
+    gst_element_state_get_name (pending_state));
 
   if (!skippy_hls_check_buffer_ahead (demux)) {
     return;
@@ -1037,6 +991,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   case SKIPPY_URI_DOWNLOADER_FAILED:
     g_return_if_fail (err);
     // When failed
+    //gst_element_set_state (GST_ELEMENT (demux), GST_STATE_READY);
     GST_ERROR ("Fragment fetch error: %s", err->message);
     // Actual download failure
     demux->download_failed_count++;
@@ -1049,12 +1004,13 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
       skippy_hls_demux_update_playlist (demux);
     }
-    GST_DEBUG_OBJECT (demux, "Exiting task now ...");
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
     g_return_if_fail (!err);
     g_return_if_fail (fragment);
     GST_DEBUG ("Got next fragment");
+    //
+    //gst_element_set_state (GST_ELEMENT (demux), GST_STATE_PLAYING);
     // Reset failure counter
     demux->download_failed_count = 0;
     // Push fragment onto pipeline
@@ -1067,6 +1023,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     skippy_m3u8_client_advance_fragment (demux->client);
     break;
   }
+
+  GST_DEBUG_OBJECT (demux, "Exiting task now ...");
 
   // Clear any error
   if (err) {
@@ -1167,7 +1125,10 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
     // Sequence numbers across variants may differ, and we need to input our current position to reach
     // the correct sequence number (we might have to re-issue a segment event as well
     // if the current sequence number is too far ahead of a live stream)
+    // FIMXE: Validate this function doesn't mess up things (therefore we currently don't fully support variant playlists but that's OK)
+#if 0
     skippy_m3u8_client_update_playlist_position (demux->client, demux->segment.position, &demux->need_segment);
+#endif
     g_object_unref (download);
     return TRUE;
   case SKIPPY_URI_DOWNLOADER_FAILED:
@@ -1257,9 +1218,6 @@ retry_failover_protection:
   // Update current playlist
   skippy_m3u8_client_set_current (demux->client, current_variant);
 
-  // Advertise discontinuity
-  demux->discont = TRUE;
-
   // Perform the update
   if (skippy_hls_demux_update_playlist (demux)) {
     // SUCCESS ! Post a "playlist" message (WTF?)
@@ -1274,8 +1232,6 @@ retry_failover_protection:
     return FALSE;
   }
 
-  /* Force typefinding since we might have changed media type */
-  demux->do_typefind = TRUE;
   return TRUE;
 }
 
