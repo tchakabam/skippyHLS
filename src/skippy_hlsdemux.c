@@ -46,7 +46,7 @@
 #include <nettle/aes.h>
 #include <nettle/cbc.h>
 
-#include "skippy_hlsdemux.h"
+#include "skippyHLS/skippy_hlsdemux.h"
 
 #define GST_ELEMENT_ERROR_FROM_ERROR(el, msg, err) G_STMT_START {       \
   gchar *__dbg = g_strdup (err->message);                               \

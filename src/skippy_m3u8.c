@@ -19,7 +19,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
- #include "skippy_m3u8.h"
+ #include "skippyHLS/skippy_m3u8.h"
 
 #include <stdlib.h>
 #include <math.h>
