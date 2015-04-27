@@ -53,13 +53,14 @@ typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
  */
 struct _SkippyHLSDemux
 {
-  GstElement parent;
+  GstBin parent;
 
   /* Pads */
   GstPad *sinkpad;
   GstPad *srcpad;
 
   /* Member objects */
+  GstElement* queue;
   GstBuffer* playlist;
   GstCaps *input_caps;
   SkippyUriDownloader *downloader;
@@ -96,7 +97,7 @@ struct _SkippyHLSDemux
 
 struct _SkippyHLSDemuxClass
 {
-  GstElementClass parent_class;
+  GstBinClass parent_class;
 };
 
 G_GNUC_INTERNAL

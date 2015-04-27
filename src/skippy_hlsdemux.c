@@ -35,10 +35,6 @@
  * Last reviewed on 2010-10-07
  */
 
-/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
- * with newer GLib versions (>= 2.31.0) */
-#define GLIB_DISABLE_DEPRECATION_WARNINGS
-
 #include <string.h>
 
 #include <skippyHLS/skippy_hlsdemux.h>
@@ -78,6 +74,8 @@ typedef enum
 #define DEFAULT_BUFFER_AHEAD_DURATION 30
 #define DEFAULT_CACHING_ENABLED TRUE
 
+#define POLL_PERIOD 1000000 // microseconds
+
 /* GObject */
 static void skippy_hls_demux_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);
@@ -116,7 +114,7 @@ static gboolean
 skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux);
 
 #define skippy_hls_demux_parent_class parent_class
-G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_ELEMENT);
+G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 
 #define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "hlsdemux-statistics"
 
@@ -195,7 +193,7 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
       "Marc-Andre Lureau <marcandre.lureau@gmail.com>\n"
       "Andoni Morales Alastruey <ylatuya@gmail.com>");
 
-  GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhls-demux", 0,
+  GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhlsdemux", 0,
       "Skippy HLS client");
 }
 
@@ -231,6 +229,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->playlist = NULL;
   demux->input_caps = NULL;
   demux->client = NULL;
+  demux->queue = gst_element_factory_make ("queue2", NULL);
   demux->downloader = skippy_uri_downloader_new (downloader_callback);
 
   // Props
@@ -743,26 +742,36 @@ skippy_hls_demux_stop (SkippyHLSDemux * demux)
   GST_DEBUG ("Stopped streaming task");
 }
 
+// FIXME: Refactor this
 static void
-switch_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
+skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
 {
   GstPad *oldpad = demux->srcpad;
   GstEvent *event;
+  GstPad *queue_srcpad, *queue_sinkpad;
   gchar *stream_id;
   gchar *name;
+  GstPadTemplate* templ = gst_static_pad_template_get (&srctemplate);
 
   if (demux->linked) {
-    GST_WARNING ("Pads already linked !!!");
+    GST_DEBUG ("Pads already linked");
     return;
   }
 
-  GST_DEBUG ("Switching pads (oldpad:%p) with caps: %" GST_PTR_FORMAT, oldpad,
+  GST_DEBUG ("Linking pads (oldpad:%p) with caps: %" GST_PTR_FORMAT, oldpad,
       newcaps);
 
-  /* First create and activate new pad */
+  /* First create and activate new source pad pad */
   name = g_strdup_printf ("src_%u", demux->srcpad_counter++);
-  demux->srcpad = gst_pad_new_from_static_template (&srctemplate, name);
+  demux->srcpad = gst_ghost_pad_new_no_target_from_template (name, templ);
+  gst_object_unref (templ);
   g_free (name);
+
+  // Link queue src to external source pad
+  queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
+  gst_ghost_pad_set_target (GST_GHOST_PAD (demux->srcpad), queue_srcpad);
+  gst_object_unref (queue_srcpad);
+
   gst_pad_set_event_function (demux->srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_event));
   gst_pad_set_query_function (demux->srcpad,
@@ -795,7 +804,6 @@ switch_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
     gst_pad_set_caps (demux->srcpad, newcaps);
 
   gst_element_add_pad (GST_ELEMENT (demux), demux->srcpad);
-
   gst_element_no_more_pads (GST_ELEMENT (demux));
 
   if (oldpad) {
@@ -808,6 +816,7 @@ switch_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
   demux->linked = TRUE;
 }
 
+// FIXME: Refactor this
 static gboolean
 skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fragment)
 {
@@ -834,7 +843,7 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
   if (G_UNLIKELY (!srccaps
     || demux->discont || (buf && GST_BUFFER_IS_DISCONT (buf)))
     ) {
-    switch_pads (demux, bufcaps);
+    skippy_hls_demux_link_pads (demux, bufcaps);
     demux->need_segment = TRUE;
     demux->discont = FALSE;
     if (buf)
@@ -877,6 +886,7 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
   GstBuffer* buf;
   GstFlowReturn ret;
   GstCaps *caps;
+  GstPad* queue_sinkpad;
 
   if (!skippy_hls_demux_configure_src_pad (demux, fragment)) {
     GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND,
@@ -932,7 +942,11 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
     demux->segment.position += GST_BUFFER_DURATION (buf);
 
   /* Push buffer */
-  ret = gst_pad_push (demux->srcpad, buf);
+  GST_DEBUG ("Enter pad chain function");
+  queue_sinkpad = gst_element_get_static_pad (demux->queue, "sink");
+  ret = gst_pad_chain (queue_sinkpad, buf);
+  gst_object_unref (queue_sinkpad);
+  GST_DEBUG ("Exit pad chain function");
   if (ret != GST_FLOW_OK) {
     if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_EOS) {
       GST_ELEMENT_ERROR (demux, STREAM, FAILED, (NULL),
@@ -978,7 +992,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     if (!demux->seeked && demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
       GST_LOG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)",
         ((float) demux->segment.position) / GST_SECOND);
-      g_usleep (1000000);
+      g_usleep (POLL_PERIOD);
       return FALSE;
     }
   }
@@ -992,7 +1006,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
 
-  GST_DEBUG_OBJECT (demux, "Entering stream task");
+  GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");
 
   if (!skippy_hls_check_buffer_ahead (demux)) {
     return;
@@ -1057,6 +1071,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   // Clear any error
   if (err) {
     g_clear_error (&err);
+    g_usleep (POLL_PERIOD);
   }
 }
 
