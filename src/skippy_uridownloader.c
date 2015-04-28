@@ -614,7 +614,7 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   GST_OBJECT_LOCK (downloader);
 
   if (downloader->priv->err) {
-    g_return_val_if_fail (!fragment->completed, SKIPPY_URI_DOWNLOADER_FAILED);
+    fragment->completed = FALSE;
     GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
