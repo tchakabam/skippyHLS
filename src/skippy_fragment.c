@@ -302,7 +302,7 @@ skippy_fragment_decrypt (SkippyFragment * fragment,
   g_mutex_lock (&fragment->priv->lock);
 
   GError* err = NULL;
-  SkippyFragment* key_fragment;
+  SkippyFragment* key_fragment = NULL;
   GstBuffer *key_buffer, *encrypted_buffer, *decrypted_buffer;
   GstMapInfo key_info, encrypted_info, decrypted_info;
   gsize unpadded_size;
@@ -368,7 +368,9 @@ decrypt_error:
   gst_buffer_unref (decrypted_buffer);
 
 error:
-  g_object_unref (key_fragment);
+  if (key_fragment) {
+    g_object_unref (key_fragment);
+  }
   g_mutex_unlock (&fragment->priv->lock);
   return fragment->decrypted;
 }

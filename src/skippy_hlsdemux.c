@@ -39,7 +39,7 @@
 
 #include <skippyHLS/skippy_hlsdemux.h>
 
-static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
+static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
@@ -224,6 +224,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->srcpad = NULL;
   demux->sinkpad = gst_pad_new_from_static_template (&sinktemplate, "sink");
 
+  // Configure sink pad
   gst_pad_set_chain_function (demux->sinkpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_chain));
   gst_pad_set_event_function (demux->sinkpad,
@@ -269,7 +270,6 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   demux->seeked = FALSE;
   demux->have_group_id = FALSE;
   demux->group_id = G_MAXUINT;
-  demux->srcpad_counter = 0;
   demux->next_update = -1;
   demux->linked = FALSE;
 
@@ -753,77 +753,77 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
   GstEvent *event;
   gchar *stream_id;
   GstPad *queue_srcpad;
-  gchar *name;
   GstPadTemplate* templ;
 
   GST_DEBUG ("Linking pads with caps: %" GST_PTR_FORMAT, newcaps);
 
-  // Create and activate new source pad
-  name = g_strdup_printf ("src_%u", demux->srcpad_counter++);
+  // Create and activate new source pad (linked as a ghost pad to our queue source pad)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
-  demux->srcpad = gst_ghost_pad_new_from_template (name, queue_srcpad, templ);
+  demux->srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
   gst_object_unref (templ);
   gst_object_unref (queue_srcpad);
-  g_free (name);
 
+  // Configure external source pad
+  gst_pad_set_active (demux->srcpad, TRUE);
   gst_pad_set_event_function (demux->srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_event));
   gst_pad_set_query_function (demux->srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_query));
-  gst_pad_use_fixed_caps (demux->srcpad);
-  gst_pad_set_active (demux->srcpad, TRUE);
-  gst_pad_set_caps (demux->srcpad, newcaps);
   gst_element_add_pad (GST_ELEMENT (demux), demux->srcpad);
   gst_element_no_more_pads (GST_ELEMENT (demux));
 
+  // Sending stream start event that we got on sink pad (sticky event)
   stream_id = gst_pad_create_stream_id (demux->srcpad, GST_ELEMENT_CAST (demux), NULL);
   event = gst_pad_get_sticky_event (demux->sinkpad, GST_EVENT_STREAM_START, 0);
   if (event) {
+    // Do we have a group ID from the sink pad sticky event?
     if (gst_event_parse_group_id (event, &demux->group_id))
       demux->have_group_id = TRUE;
     else
       demux->have_group_id = FALSE;
+    // Swallow event
     gst_event_unref (event);
   } else if (!demux->have_group_id) {
     demux->have_group_id = TRUE;
     demux->group_id = gst_util_group_id_next ();
   }
+  // Create stream start event from stream ID that we parsed from sink pad
   event = gst_event_new_stream_start (stream_id);
+  // Eventually set group ID
   if (demux->have_group_id) {
     gst_event_set_group_id (event, demux->group_id);
   }
+  // Send the stream start event
   gst_pad_send_event (demux->queue_sinkpad, event);
   g_free (stream_id);
+
+  // Set caps on our internal input (queue will forward caps to output)
+  // NOTE: We only can do this after sending the stream-start event (triggers caps event)
+  gst_pad_use_fixed_caps (demux->queue_sinkpad);
+  gst_pad_set_caps (demux->queue_sinkpad, newcaps);
 }
 
 // FIXME: Refactor this
 static gboolean
 skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fragment)
 {
-  GstCaps *bufcaps = NULL, *srccaps = NULL;
+  GstCaps *bufcaps = NULL;
   GstBuffer *buf = NULL;
+  gboolean ret = FALSE;
 
-  // Get buffer and caps from fragment
-  buf = skippy_fragment_get_buffer (fragment);
-  if (G_UNLIKELY (!buf)) {
-    return FALSE;
-  }
-  bufcaps = skippy_fragment_get_caps (fragment);
-  if (G_UNLIKELY (!bufcaps)) {
-    return FALSE;
-  }
-
-  // Here we configure the pad caps in order to tell downstream elements
-  // about what data were pushing
-  if (G_LIKELY (demux->srcpad)) {
-    srccaps = gst_pad_get_current_caps (demux->srcpad);
-    GST_DEBUG ("Using existing pad caps");
-  }
-
-  // If we have no caps yet, or if there is a discontinuity
-  // we need to relink/reconfigure the source pads
+  // If we have not created the source pad yet, do it now
   if (G_UNLIKELY(!demux->linked)) {
+    // Get buffer and caps from fragment
+    buf = skippy_fragment_get_buffer (fragment);
+    if (G_UNLIKELY (!buf)) {
+      goto error;
+    }
+    bufcaps = skippy_fragment_get_caps (fragment);
+    if (G_UNLIKELY (!bufcaps)) {
+      goto error;
+    }
+    // Link pads with these caps
     skippy_hls_demux_link_pads (demux, bufcaps);
     // Flag the buffer as discont' if we just initialized the pad
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
@@ -840,11 +840,16 @@ skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fra
     demux->need_segment = FALSE;
   }
 
-  gst_caps_unref (bufcaps);
-  gst_caps_unref (srccaps);
-  gst_buffer_unref (buf);
+  ret = TRUE;
 
-  return TRUE;
+error:
+  if (bufcaps) {
+    gst_caps_unref (bufcaps);
+  }
+  if (buf) {
+    gst_buffer_unref (buf);
+  }
+  return ret;
 }
 
 static void
@@ -975,7 +980,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   case SKIPPY_URI_DOWNLOADER_VOID:
     // Error & fragment should be NULL
     g_return_if_fail (!err);
-    g_return_if_fail (!fragment);
     GST_DEBUG ("Got NULL as next fragment");
     if (skippy_m3u8_client_is_live (demux->client)) {
       GST_DEBUG_OBJECT (demux, "No fragment left but live playlist, retrying later");

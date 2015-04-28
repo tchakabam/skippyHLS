@@ -79,7 +79,6 @@ struct _SkippyHLSDemux
   /* Internal state */
   GstSegment segment;
   GstClockTime duration; // cache for the duration computation of the M3U8 client
-  gint srcpad_counter;
   gboolean have_group_id;
   guint group_id;
   guint64 next_update;

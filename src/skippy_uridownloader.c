@@ -112,6 +112,8 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
 static void
 skippy_uri_downloader_dispose (GObject * object)
 {
+  g_return_if_fail (object);
+
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (object);
 
   // Let's reset first (this is flushing the message bus and unref-ing any owned download)
