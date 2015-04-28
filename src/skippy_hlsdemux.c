@@ -505,22 +505,25 @@ skippy_hls_demux_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
 static void
 skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metric, guint64 time_val, gsize size)
 {
-  GstMessage *message;
-  GstStructure * structure;
+  GstStructure * structure = NULL;
 
+  // Create message data
   switch (metric) {
   case STAT_TIME_TO_DOWNLOAD_FRAGMENT:
+    GST_DEBUG ("Statistic: STAT_TIME_TO_DOWNLOAD_FRAGMENT");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
-      "time-to-download-fragment", GST_TYPE_CLOCK_TIME, time_val,
-      "fragment-size", G_TYPE_UINT64, size,
+      "time-to-download-fragment", G_TYPE_UINT64, time_val,
+      "fragment-size", G_TYPE_UINT64, (guint64) size,
       NULL);
     break;
   case STAT_TIME_TO_PLAYLIST:
+    GST_DEBUG ("Statistic: STAT_TIME_TO_PLAYLIST");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "time-to-playlist", GST_TYPE_CLOCK_TIME, time_val,
       NULL);
     break;
   case STAT_TIME_OF_FIRST_PLAYLIST:
+    GST_DEBUG ("Statistic: STAT_TIME_OF_FIRST_PLAYLIST");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "time-of-first-playlist", GST_TYPE_CLOCK_TIME, time_val,
       NULL);
@@ -530,10 +533,11 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
     return;
   }
 
-  message =
-      gst_message_new_element (GST_OBJECT_CAST (demux), structure);
-  gst_element_post_message (GST_ELEMENT_CAST (demux), message);
+  // Post the message on the bus
+  gst_element_post_message (GST_ELEMENT_CAST (demux),
+    gst_message_new_element (GST_OBJECT_CAST (demux), structure));
 }
+
 
 static gboolean
 skippy_hls_demux_query_location (SkippyHLSDemux * demux)
@@ -1096,7 +1100,8 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
 
   // Size of transferred payload (may be encrypted)
   size = skippy_fragment_get_buffer_size (fragment);
-  skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_DOWNLOAD_FRAGMENT,
+  skippy_hls_demux_post_stat_msg (demux,
+    STAT_TIME_TO_DOWNLOAD_FRAGMENT,
     fragment->download_stop_time - fragment->download_start_time,
     size);
 
@@ -1236,7 +1241,7 @@ retry_failover_protection:
 
   // Perform the update
   if (skippy_hls_demux_update_playlist (demux)) {
-    // SUCCESS ! Post a "playlist" message (WTF?)
+    // SUCCESS ! Post a "playlist" message (WTF is that for?)
     GstStructure *s = gst_structure_new ("playlist",
         "uri", G_TYPE_STRING, skippy_m3u8_client_get_current_uri (demux->client),
         "bitrate", G_TYPE_INT, new_bandwidth, NULL);
