@@ -294,6 +294,16 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
     demux->srcpad = NULL;
   }
 
+  if (demux->queue) {
+    // Configure internal queue: get rid of all size limitations, don't emit buffering messages
+    g_object_set (demux->queue,
+      "max-size-buffers", 1024,
+      "max-size-bytes", 128 * 1000000,
+      "max-size-time", 3600 * GST_SECOND,
+      "use-buffering", FALSE,
+      NULL);
+  }
+
   // Reset downloader (we re-use the object)
   skippy_uri_downloader_reset (demux->downloader);
 }
@@ -867,6 +877,7 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
   GstBuffer* buf;
   GstFlowReturn ret;
   GstCaps *caps;
+  guint queue_level;
 
   buf = skippy_fragment_get_buffer (fragment);
 
@@ -896,7 +907,8 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
   }
 
   // Push the buffer onto the queue
-  GST_DEBUG ("Enter pad chain function");
+  g_object_get (demux->queue, "current-level-buffers", &queue_level, NULL);
+  GST_DEBUG ("Enter pad chain function, current internal queue level: %d buffers", (int) queue_level);
   ret = gst_pad_chain (demux->queue_sinkpad, buf);
   GST_DEBUG ("Exit pad chain function");
   if (ret != GST_FLOW_OK) {
