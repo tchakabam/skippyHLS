@@ -852,7 +852,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
 {
   GST_DEBUG_OBJECT (demux, "Reached end of playlist, sending EOS");
   skippy_hls_demux_configure_src_pad (demux, NULL);
-  gst_pad_push_event (demux->queue_sinkpad, gst_event_new_eos ());
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
   skippy_hls_demux_pause_tasks (demux);
 }
 
