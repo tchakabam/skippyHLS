@@ -48,6 +48,7 @@ struct _SkippyUriDownloaderPrivate
   gboolean fetching;
 
   SkippyUriDownloaderCallback callback;
+  GstElement* parent_element;
   gsize bytes_loaded;
   gsize bytes_total;
 };
@@ -185,10 +186,14 @@ skippy_uri_downloader_finalize (GObject * object)
 }
 
 SkippyUriDownloader *
-skippy_uri_downloader_new (SkippyUriDownloaderCallback callback)
+skippy_uri_downloader_new (SkippyUriDownloaderCallback callback, GstElement* parent_element)
 {
   SkippyUriDownloader* downloader = g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, NULL);
   downloader->priv->callback = callback;
+
+  // Parent element which will be used to post httpsrc messages to
+  downloader->priv->parent_element = parent_element;
+
   return downloader;
 }
 
@@ -313,7 +318,10 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
     GstMessage * message, gpointer data)
 {
   SkippyUriDownloader *downloader = (SkippyUriDownloader *) (data);
+  const GstStructure *s;
 
+  // Collect custom statistics from hlsdemux
+  s = gst_message_get_structure (message);
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
 
     skippy_uri_downloader_handle_error (downloader,
@@ -323,6 +331,11 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
 
     skippy_uri_downloader_handle_warning (downloader,
                                         message);
+  } else if (s != NULL && gst_structure_has_name (s, "cache-statistics")) {
+      // Forward the message to the parent element's bus
+      if (gst_structure_has_field(s, "cache-hit-num-bytes")) {
+        gst_element_post_message (downloader->priv->parent_element, gst_message_ref(message));
+      }
   }
   // Drop the message
   gst_message_unref (message);
