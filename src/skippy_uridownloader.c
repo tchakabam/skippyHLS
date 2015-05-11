@@ -48,6 +48,7 @@ struct _SkippyUriDownloaderPrivate
   gboolean fetching;
 
   SkippyUriDownloaderCallback callback;
+  GstElement* parent_element;
   gsize bytes_loaded;
   gsize bytes_total;
 };
@@ -185,10 +186,14 @@ skippy_uri_downloader_finalize (GObject * object)
 }
 
 SkippyUriDownloader *
-skippy_uri_downloader_new (SkippyUriDownloaderCallback callback)
+skippy_uri_downloader_new (SkippyUriDownloaderCallback callback, GstElement* parent_element)
 {
   SkippyUriDownloader* downloader = g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, NULL);
+
   downloader->priv->callback = callback;
+  // We store a reference to a parent element (optional, can be NULL) in order to forward eventual messages from our bus
+  downloader->priv->parent_element = parent_element;
+
   return downloader;
 }
 
@@ -323,6 +328,13 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
 
     skippy_uri_downloader_handle_warning (downloader,
                                         message);
+
+  } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
+
+    // Just forward the message to any other handler interested in custom element stuff
+    if (downloader->priv->parent_element) {
+      gst_element_post_message (downloader->priv->parent_element, gst_message_ref(message));
+    }
   }
   // Drop the message
   gst_message_unref (message);

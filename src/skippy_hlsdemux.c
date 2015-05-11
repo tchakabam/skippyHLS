@@ -236,7 +236,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->client = NULL;
   demux->queue = gst_element_factory_make ("queue2", NULL);
   demux->queue_sinkpad = gst_element_get_static_pad (demux->queue, "sink");
-  demux->downloader = skippy_uri_downloader_new (downloader_callback);
+  demux->downloader = skippy_uri_downloader_new (downloader_callback, GST_ELEMENT(demux));
 
   // Add bin elements
   gst_bin_add (GST_BIN (demux), demux->queue);
