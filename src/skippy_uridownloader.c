@@ -318,10 +318,7 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
     GstMessage * message, gpointer data)
 {
   SkippyUriDownloader *downloader = (SkippyUriDownloader *) (data);
-  const GstStructure *s;
 
-  // Collect custom statistics from hlsdemux
-  s = gst_message_get_structure (message);
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
 
     skippy_uri_downloader_handle_error (downloader,
@@ -331,11 +328,10 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
 
     skippy_uri_downloader_handle_warning (downloader,
                                         message);
-  } else if (s != NULL && gst_structure_has_name (s, "cache-statistics")) {
-      // Forward the message to the parent element's bus
-      if (gst_structure_has_field(s, "cache-hit-num-bytes")) {
-        gst_element_post_message (downloader->priv->parent_element, gst_message_ref(message));
-      }
+
+  } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
+    // Just forward the message to any other handler interested in custom element stuff
+    gst_element_post_message (downloader->priv->parent_element, gst_message_ref(message));
   }
   // Drop the message
   gst_message_unref (message);
