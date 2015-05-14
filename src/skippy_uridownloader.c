@@ -197,6 +197,13 @@ skippy_uri_downloader_new (SkippyUriDownloaderCallback callback, GstElement* par
   return downloader;
 }
 
+GstElement* skippy_uri_downloader_get_parent (SkippyUriDownloader *downloader)
+{
+  g_return_val_if_fail (downloader, NULL);
+
+  return downloader->priv->parent_element;
+}
+
 static void
 skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
 {

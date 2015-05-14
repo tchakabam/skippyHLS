@@ -116,8 +116,6 @@ skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux);
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 
-#define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "hlsdemux-statistics"
-
 static void
 skippy_hls_demux_dispose (GObject * obj)
 {
@@ -207,7 +205,10 @@ downloader_callback (SkippyUriDownloader* downloader,
   guint64 start_time, guint64 stop_time,
   gsize bytes_loaded, gsize bytes_total)
 {
+  GstElement* parent;
+  GstStructure* s;
   float percentage = 100.0f * bytes_loaded / bytes_total;
+
   GST_TRACE ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
     (long int) bytes_loaded,
     (long int) bytes_total,
@@ -215,6 +216,20 @@ downloader_callback (SkippyUriDownloader* downloader,
     ((float) (start_time)) / GST_SECOND,
     ((float) (stop_time)) / GST_SECOND
   );
+
+  // Post downloading message on the bus
+  parent = skippy_uri_downloader_get_parent (downloader);
+  if (parent) {
+    s = gst_structure_new (SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME,
+      "fragment-start-time", G_TYPE_UINT64, start_time,
+      "fragment-stop-time", G_TYPE_UINT64, stop_time,
+      "loaded-bytes", G_TYPE_UINT64, (guint64) bytes_loaded,
+      "total-bytes", G_TYPE_UINT64, (guint64) bytes_total,
+      NULL
+    );
+    gst_element_post_message (parent, gst_message_new_element (GST_OBJECT(parent), s));
+  }
+
 }
 
 static void
@@ -512,7 +527,7 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
   case STAT_TIME_TO_DOWNLOAD_FRAGMENT:
     GST_DEBUG ("Statistic: STAT_TIME_TO_DOWNLOAD_FRAGMENT");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
-      "time-to-download-fragment", G_TYPE_UINT64, time_val,
+      "fragment-download-time", G_TYPE_UINT64, time_val,
       "fragment-size", G_TYPE_UINT64, (guint64) size,
       NULL);
     break;
@@ -525,7 +540,8 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
   case STAT_TIME_OF_FIRST_PLAYLIST:
     GST_DEBUG ("Statistic: STAT_TIME_OF_FIRST_PLAYLIST");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
-      "time-of-first-playlist", GST_TYPE_CLOCK_TIME, time_val,
+      "manifest-download-start", GST_TYPE_CLOCK_TIME, GST_CLOCK_TIME_NONE,
+      "manifest-download-stop", GST_TYPE_CLOCK_TIME, time_val,
       NULL);
     break;
   default:
