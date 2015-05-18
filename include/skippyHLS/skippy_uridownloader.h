@@ -49,14 +49,14 @@ typedef enum {
 
 struct _SkippyUriDownloader
 {
-  GstObject parent;
+  GstBin parent;
 
   SkippyUriDownloaderPrivate *priv;
 };
 
 struct _SkippyUriDownloaderClass
 {
-  GstObjectClass parent_class;
+  GstBinClass parent_class;
 
   /*< private >*/
   gpointer _gst_reserved[GST_PADDING];
@@ -64,12 +64,12 @@ struct _SkippyUriDownloaderClass
 
 GType skippy_uri_downloader_get_type (void);
 
-SkippyUriDownloader * skippy_uri_downloader_new (SkippyUriDownloaderCallback callback, GstElement* parent_element);
+SkippyUriDownloader * skippy_uri_downloader_new ();
 SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,
 	const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
 void skippy_uri_downloader_reset (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_cancel (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_free (SkippyUriDownloader *downloader);
-GstElement* skippy_uri_downloader_get_parent (SkippyUriDownloader *downloader);
+GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader);
 
 G_END_DECLS

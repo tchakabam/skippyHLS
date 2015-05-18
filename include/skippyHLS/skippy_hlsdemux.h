@@ -46,9 +46,6 @@ G_BEGIN_DECLS
 typedef struct _SkippyHLSDemux SkippyHLSDemux;
 typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
 
-#define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
-#define SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME "skippy-hlsdemux-download"
-
 /**
  * SkippyHLSDemux:
  *
@@ -67,6 +64,7 @@ struct _SkippyHLSDemux
   GstElement* queue;
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;
+  SkippyUriDownloader *playlist_downloader;
   SkippyM3U8Client *client;     /* M3U8 client */
 
   /* Properties */
@@ -86,9 +84,7 @@ struct _SkippyHLSDemux
   guint group_id;
   guint64 next_update;
   gint download_failed_count;
-  gboolean need_segment;
   gboolean seeked;
-  gboolean linked;
 
   /* Current download rate (bps) */
   gint current_download_rate;

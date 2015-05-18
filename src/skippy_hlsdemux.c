@@ -35,6 +35,8 @@
  * Last reviewed on 2010-10-07
  */
 
+#define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
+
 #include <string.h>
 
 #include <skippyHLS/skippy_hlsdemux.h>
@@ -99,9 +101,7 @@ static gboolean skippy_hls_demux_src_query (GstPad * pad, GstObject * parent,
 static void skippy_hls_demux_stream_loop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_stop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux);
-static gboolean skippy_hls_demux_switch_playlist (SkippyHLSDemux * demux,
-    SkippyFragment * fragment);
-static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
+static SkippyFragment *skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
 static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose);
 static gboolean skippy_hls_demux_set_location (SkippyHLSDemux * demux,
@@ -110,8 +110,8 @@ static gboolean
 skippy_hls_demux_switch_bitrate (SkippyHLSDemux * demux, SkippyFragment * fragment);
 static void
 skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux);
-static gboolean
-skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux);
+static void
+skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
@@ -199,39 +199,6 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
       "Skippy HLS client");
 }
 
-// TODO: send a message here on the bus instead
-static void
-downloader_callback (SkippyUriDownloader* downloader,
-  guint64 start_time, guint64 stop_time,
-  gsize bytes_loaded, gsize bytes_total)
-{
-  GstElement* parent;
-  GstStructure* s;
-  float percentage = 100.0f * bytes_loaded / bytes_total;
-
-  GST_TRACE ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
-    (long int) bytes_loaded,
-    (long int) bytes_total,
-    percentage,
-    ((float) (start_time)) / GST_SECOND,
-    ((float) (stop_time)) / GST_SECOND
-  );
-
-  // Post downloading message on the bus
-  parent = skippy_uri_downloader_get_parent (downloader);
-  if (parent) {
-    s = gst_structure_new (SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME,
-      "fragment-start-time", G_TYPE_UINT64, start_time,
-      "fragment-stop-time", G_TYPE_UINT64, stop_time,
-      "loaded-bytes", G_TYPE_UINT64, (guint64) bytes_loaded,
-      "total-bytes", G_TYPE_UINT64, (guint64) bytes_total,
-      NULL
-    );
-    gst_element_post_message (parent, gst_message_new_element (GST_OBJECT(parent), s));
-  }
-
-}
-
 static void
 skippy_hls_demux_init (SkippyHLSDemux * demux)
 {
@@ -251,10 +218,15 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->client = NULL;
   demux->queue = gst_element_factory_make ("queue2", NULL);
   demux->queue_sinkpad = gst_element_get_static_pad (demux->queue, "sink");
-  demux->downloader = skippy_uri_downloader_new (downloader_callback, GST_ELEMENT(demux));
+  demux->downloader = skippy_uri_downloader_new ();
+  demux->playlist_downloader = skippy_uri_downloader_new ();
 
   // Add bin elements
   gst_bin_add (GST_BIN (demux), demux->queue);
+  gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
+
+  // Link pads
+  skippy_hls_demux_link_pads (demux);
 
   // Props
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
@@ -270,7 +242,6 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->stream_task =
       gst_task_new ((GstTaskFunction) skippy_hls_demux_stream_loop, demux, NULL);
   gst_task_set_lock (demux->stream_task, &demux->stream_lock);
-
 }
 
 static void
@@ -281,12 +252,10 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   demux->duration = GST_CLOCK_TIME_NONE;
   demux->download_failed_count = 0;
   demux->current_download_rate = -1;
-  demux->need_segment = TRUE;
   demux->seeked = FALSE;
   demux->have_group_id = FALSE;
   demux->group_id = G_MAXUINT;
   demux->next_update = -1;
-  demux->linked = FALSE;
 
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
 
@@ -481,7 +450,6 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Update data segment
   gst_segment_do_seek (&demux->segment, rate, format, flags, start_type,
       start, stop_type, stop, NULL);
-  demux->need_segment = TRUE;
   demux->seeked = TRUE;
 
   // Flush stop
@@ -776,18 +744,22 @@ skippy_hls_demux_stop (SkippyHLSDemux * demux)
   GST_DEBUG ("Stopped streaming task");
 }
 
-// FIXME: Refactor this
 static void
-skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
+skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
 {
   GstEvent *event;
   gchar *stream_id;
-  GstPad *queue_srcpad;
+  GstPad *queue_srcpad, *downloader_srcpad;
   GstPadTemplate* templ;
 
-  GST_DEBUG ("Linking pads with caps: %" GST_PTR_FORMAT, newcaps);
+  GST_DEBUG ("Linking pads...");
 
-  // Create and activate new source pad (linked as a ghost pad to our queue source pad)
+  // Link downloader -> queue
+  downloader_srcpad = gst_element_get_static_pad (GST_ELEMENT(demux->downloader), "src");
+  gst_pad_link (downloader_srcpad, demux->queue_sinkpad);
+  gst_object_unref (downloader_srcpad);
+
+  // Link queue -> ext src (ghost pad)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
   demux->srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
@@ -827,121 +799,40 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
   // Send the stream start event
   gst_pad_send_event (demux->queue_sinkpad, event);
   g_free (stream_id);
-
-  // Set caps on our internal input (queue will forward caps to output)
-  // NOTE: We only can do this after sending the stream-start event (triggers caps event)
-  gst_pad_use_fixed_caps (demux->queue_sinkpad);
-  gst_pad_set_caps (demux->queue_sinkpad, newcaps);
-}
-
-// FIXME: Refactor this
-static gboolean
-skippy_hls_demux_configure_src_pad (SkippyHLSDemux * demux, SkippyFragment * fragment)
-{
-  GstCaps *bufcaps = NULL;
-  GstBuffer *buf = NULL;
-  gboolean ret = FALSE;
-
-  // If we have not created the source pad yet, do it now
-  if (G_UNLIKELY(!demux->linked)) {
-    // Get buffer and caps from fragment
-    buf = skippy_fragment_get_buffer (fragment);
-    if (G_UNLIKELY (!buf)) {
-      goto error;
-    }
-    bufcaps = skippy_fragment_get_caps (fragment);
-    if (G_UNLIKELY (!bufcaps)) {
-      goto error;
-    }
-    // Link pads with these caps
-    skippy_hls_demux_link_pads (demux, bufcaps);
-    // Flag the buffer as discont' if we just initialized the pad
-    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
-    // Set flags
-    demux->linked = TRUE;
-    demux->need_segment = TRUE;
-  }
-
-  // Send a segment event if needed
-  if (demux->need_segment) {
-    GST_DEBUG_OBJECT (demux, "Sending segment event: %" GST_SEGMENT_FORMAT,
-      &demux->segment);
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_segment (&demux->segment));
-    demux->need_segment = FALSE;
-  }
-
-  ret = TRUE;
-
-error:
-  if (bufcaps) {
-    gst_caps_unref (bufcaps);
-  }
-  if (buf) {
-    gst_buffer_unref (buf);
-  }
-  return ret;
 }
 
 static void
 skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
 {
   GST_DEBUG_OBJECT (demux, "Reached end of playlist, sending EOS");
-  skippy_hls_demux_configure_src_pad (demux, NULL);
   gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
   skippy_hls_demux_pause_tasks (demux);
 }
 
 static gboolean
-skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
+skippy_hls_send_segment_event (SkippyHLSDemux * demux, SkippyFragment* fragment)
 {
-  GstBuffer* buf;
-  GstFlowReturn ret;
-  GstCaps *caps;
   guint queue_level;
 
-  buf = skippy_fragment_get_buffer (fragment);
-
-  GST_DEBUG_OBJECT (demux, "Pushing buffer %" GST_TIME_FORMAT,
-      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)));
-
-  // Flagging buffer as discontinuous if necessary
-  if (fragment->discontinuous) {
-    GST_DEBUG_OBJECT (demux, "Marking fragment as discontinuous");
-    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
-  } else {
-    GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
-  }
-
-  // Re-configure source pad if necessary (check for available caps)
-  if (!skippy_hls_demux_configure_src_pad (demux, fragment)) {
-    GST_ELEMENT_ERROR (demux, STREAM, TYPE_NOT_FOUND, ("Could not determine type of stream"), (NULL));
-    gst_buffer_unref (buf);
-    return FALSE;
-  }
+  GST_DEBUG_OBJECT (demux, "Pushing fragment at %ld - %ld ms",
+    (long int) fragment->start_time / GST_MSECOND, (long int) fragment->stop_time / GST_MSECOND);
 
   // Updating current data segment properties
-  demux->segment.position = GST_BUFFER_TIMESTAMP (buf);
+  demux->segment.position = 0;
+  demux->segment.start = fragment->start_time;
+  demux->segment.stop = fragment->stop_time;
+  demux->segment.duration = fragment->duration;
   demux->seeked = FALSE;
-  if (demux->segment.rate > 0) {
-    demux->segment.position += GST_BUFFER_DURATION (buf);
-  }
 
-  // Push the buffer onto the queue
+  // Sending segment event
+  GST_DEBUG_OBJECT (demux, "Sending segment event: %" GST_SEGMENT_FORMAT, &demux->segment);
+
+  // Push the segment event onto the queue
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_segment (&demux->segment));
+
+  // Monitor queue levels
   g_object_get (demux->queue, "current-level-buffers", &queue_level, NULL);
-  GST_DEBUG ("Enter pad chain function, current internal queue level: %d buffers", (int) queue_level);
-  ret = gst_pad_chain (demux->queue_sinkpad, buf);
-  GST_DEBUG ("Exit pad chain function");
-  if (ret != GST_FLOW_OK) {
-    if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_EOS) {
-      GST_ELEMENT_ERROR (demux, STREAM, FAILED, (NULL),
-          ("Error pushing buffer (will send EOS): %s", gst_flow_get_name (ret)));
-      gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
-    } else {
-      GST_WARNING_OBJECT (demux, "Can't push buffer because: %s", gst_flow_get_name (ret));
-    }
-    return FALSE;
-  }
-  GST_DEBUG_OBJECT (demux, "Pushed buffer on src pad");
+  GST_DEBUG ("Current internal queue level: %d buffers", (int) queue_level);
   return TRUE;
 }
 
@@ -1006,7 +897,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GST_DEBUG ("Will fetch next fragment ...");
 
   /* Handle failure to get the next fragment */
-  fragment = skippy_hls_demux_get_next_fragment (demux, &fetch_ret, &err);
+  fragment = skippy_hls_demux_push_next_fragment (demux, &fetch_ret, &err);
 
   switch (fetch_ret) {
   case SKIPPY_URI_DOWNLOADER_VOID:
@@ -1049,12 +940,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     //gst_element_set_state (GST_ELEMENT (demux), GST_STATE_PLAYING);
     // Reset failure counter
     demux->download_failed_count = 0;
-    // Push fragment onto pipeline
-    skippy_hls_push_fragment (demux, fragment);
     // Drop current fragment in any case
     g_object_unref (fragment);
-    // Check for live update of playlist
-    skippy_hls_demux_check_for_live_update (demux);
     // Go to next fragment
     skippy_m3u8_client_advance_fragment (demux->client);
     break;
@@ -1062,20 +949,20 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
   GST_DEBUG_OBJECT (demux, "Exiting task now ...");
 
-  // Clear any error
+  // Handle error
   if (err) {
-    g_clear_error (&err);
     g_usleep (POLL_PERIOD);
   }
+  g_clear_error (&err);
+
 }
 
 /* Interacts with M3U8 client and URI downloader to provide next fragment to streaming loop,
 measures download speed, posts stat message and decrypt fragment buffer, triggers bitrate switching */
 static SkippyFragment *
-skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn *fetch_ret, GError ** err)
+skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn *fetch_ret, GError ** err)
 {
   GstStructure *stat_msg;
-  guint64 size;
   gboolean allow_cache = demux->caching_enabled;
   SkippyFragment* fragment;
 
@@ -1087,6 +974,9 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
     *fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
     return NULL;
   }
+
+  // First let's issue a segment event based on what we will push here
+  //skippy_hls_send_segment_event (demux, fragment);
 
   GST_INFO_OBJECT (demux,
       "Fetching next fragment %s (range=%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT
@@ -1114,15 +1004,10 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
     return NULL;
   }
 
-  // Size of transferred payload (may be encrypted)
-  size = skippy_fragment_get_buffer_size (fragment);
   skippy_hls_demux_post_stat_msg (demux,
     STAT_TIME_TO_DOWNLOAD_FRAGMENT,
     fragment->download_stop_time - fragment->download_start_time,
-    size);
-
-  /* try to switch to another bitrate if needed */
-  skippy_hls_demux_switch_bitrate (demux, fragment);
+    fragment->size);
 
   GST_DEBUG ("Returning finished fragment");
 
@@ -1133,15 +1018,16 @@ static gboolean
 skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
 {
   SkippyFragment *download;
-  GstBuffer *buf;
+  GstBuffer *buf = NULL;
   GstStructure *stat_msg;
   GError* err;
   SkippyUriDownloaderFetchReturn fetch_ret;
+  gboolean ret = FALSE;
 
   // Create a download
   download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client), NULL, NULL);
   // Download it
-  fetch_ret = skippy_uri_downloader_fetch_fragment (demux->downloader,
+  fetch_ret = skippy_uri_downloader_fetch_fragment (demux->playlist_downloader,
     download, // Media fragment to load
     demux->client->main ? demux->client->main->uri : NULL, // Referrer
     TRUE, // Compress (good for playlists)
@@ -1154,20 +1040,14 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
     skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_PLAYLIST, download->download_stop_time - download->download_start_time, 0);
     // Load M3U8 buffer into parser
-    if (!skippy_m3u8_client_load_playlist (demux->client, skippy_fragment_get_buffer (download))) {
+    buf = skippy_uri_downloader_get_buffer (demux->playlist_downloader);
+    if (!skippy_m3u8_client_load_playlist (demux->client, buf)) {
       GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
-      g_object_unref (download);
-      return FALSE;
+      ret = FALSE;
+      break;
     }
-    // Sequence numbers across variants may differ, and we need to input our current position to reach
-    // the correct sequence number (we might have to re-issue a segment event as well
-    // if the current sequence number is too far ahead of a live stream)
-    // FIMXE: Validate this function doesn't mess up things (therefore we currently don't fully support variant playlists but that's OK)
-#if 0
-    skippy_m3u8_client_update_playlist_position (demux->client, demux->segment.position, &demux->need_segment);
-#endif
-    g_object_unref (download);
-    return TRUE;
+    ret = TRUE;
+    break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
   case SKIPPY_URI_DOWNLOADER_VOID:
@@ -1175,9 +1055,15 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
       GST_ERROR ("Error updating playlist: %s", err->message);
       g_clear_error (&err);
     }
-    g_object_unref (download);
-    return FALSE;
+    ret = FALSE;
+    break;
   }
+
+  if (buf) {
+    gst_buffer_unref (buf);
+  }
+  g_object_unref (download);
+  return ret;
 }
 
 static gboolean
@@ -1198,6 +1084,7 @@ skippy_hls_demux_set_next_playlist_update (SkippyHLSDemux* demux, guint64 second
       gst_util_uint64_scale (seconds_from_now, G_USEC_PER_SEC, GST_SECOND);
 }
 
+#if 0
 static gboolean
 skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux)
 {
@@ -1314,6 +1201,7 @@ skippy_hls_demux_switch_bitrate (SkippyHLSDemux * demux, SkippyFragment * fragme
 
   return skippy_hls_demux_change_playlist (demux, bitrate * demux->bitrate_limit);
 }
+#endif
 
 G_GNUC_INTERNAL
 void skippy_hlsdemux_setup (void)

@@ -934,53 +934,6 @@ skippy_m3u8_client_get_current_fragment_duration (SkippyM3U8Client * client)
   return dur;
 }
 
-void
-skippy_m3u8_client_update_playlist_position (SkippyM3U8Client * client, guint64 target_pos, gboolean* need_segment)
-{
-  GstClockTime current_pos;
-  guint sequence = 0, last_sequence = 0;
-  GList *walk;
-  SkippyM3U8MediaFile *file;
-
-  /* If it's a live source, do not let the sequence number go beyond
-   * three fragments before the end of the list */
-  if (client->current && skippy_m3u8_client_is_live (client)) {
-    SKIPPY_M3U8_CLIENT_LOCK (client);
-    last_sequence =
-        SKIPPY_M3U8_MEDIA_FILE (g_list_last (client->current->files)->
-        data)->sequence;
-    if (client->sequence >= last_sequence - 3) {
-      GST_DEBUG_OBJECT (client, "Sequence is beyond playlist. Moving back to %d",
-          last_sequence - 3);
-      *need_segment = TRUE;
-      client->sequence = last_sequence - 3;
-    }
-    SKIPPY_M3U8_CLIENT_UNLOCK (client);
-  } else if (client->current && !skippy_m3u8_client_is_live (client)) {
-    /* Sequence numbers are not guaranteed to be the same in different
-     * playlists, so get the correct fragment here based on the current
-     * position
-     */
-    SKIPPY_M3U8_CLIENT_LOCK (client);
-    current_pos = 0;
-    for (walk = client->current->files; walk; walk = walk->next) {
-      file = walk->data;
-      sequence = file->sequence;
-      if (current_pos <= target_pos
-          && target_pos < current_pos + file->duration) {
-        break;
-      }
-      current_pos += file->duration;
-    }
-    /* End of playlist */
-    if (!walk)
-      sequence++;
-    client->sequence = sequence;
-    client->sequence_position = current_pos;
-    SKIPPY_M3U8_CLIENT_UNLOCK (client);
-  }
-}
-
 static gchar *
 buf_to_utf8_playlist (GstBuffer * buf)
 {

@@ -31,7 +31,6 @@
 #include <gst/base/gstadapter.h>
 
 #include <skippyHLS/skippy_fragment.h>
-#include <skippyHLS/skippy_uridownloader.h>
 
 #define SKIPPY_FRAGMENT_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), TYPE_SKIPPY_FRAGMENT, SkippyFragmentPrivate))
 
@@ -40,8 +39,6 @@ GST_DEBUG_CATEGORY_STATIC (skippy_fragment_debug);
 
 struct _SkippyFragmentPrivate
 {
-  GstBuffer *buffer;
-  GstCaps *caps;
   GMutex lock;
 };
 
@@ -72,7 +69,6 @@ skippy_fragment_init (SkippyFragment * fragment)
   fragment->priv = priv = SKIPPY_FRAGMENT_GET_PRIVATE (fragment);
 
   g_mutex_init (&fragment->priv->lock);
-  priv->buffer = NULL;
 
   fragment->download_start_time = gst_util_get_timestamp ();
   fragment->start_time = 0;
@@ -85,6 +81,7 @@ skippy_fragment_init (SkippyFragment * fragment)
   fragment->cancelled = FALSE;
   fragment->discontinuous = FALSE;
   fragment->decrypted = TRUE;
+  fragment->size = 0;
 }
 
 SkippyFragment *
@@ -128,150 +125,22 @@ skippy_fragment_dispose (GObject * object)
 {
   SkippyFragmentPrivate *priv = SKIPPY_FRAGMENT (object)->priv;
 
-  if (priv->buffer != NULL) {
-    gst_buffer_unref (priv->buffer);
-    priv->buffer = NULL;
-  }
-
-  if (priv->caps != NULL) {
-    gst_caps_unref (priv->caps);
-    priv->caps = NULL;
-  }
-
   G_OBJECT_CLASS (skippy_fragment_parent_class)->dispose (object);
 }
 
-GstBuffer *
-skippy_fragment_get_buffer (SkippyFragment * fragment)
-{
-  g_return_val_if_fail (fragment != NULL, NULL);
-
-  if (!fragment->completed)
-    return NULL;
-  if (!fragment->priv->buffer)
-    return NULL;
-
-  gst_buffer_ref (fragment->priv->buffer);
-  return fragment->priv->buffer;
-}
-
-gsize skippy_fragment_get_buffer_size (SkippyFragment* fragment)
-{
-  g_return_val_if_fail (fragment != NULL, 0);
-
-  if (!fragment->priv->buffer)
-    return 0;
-
-  return gst_buffer_get_size (fragment->priv->buffer);
-}
-
 void
-skippy_fragment_set_caps (SkippyFragment * fragment, GstCaps * caps)
+skippy_fragment_set_completed (SkippyFragment * fragment)
 {
   g_return_if_fail (fragment != NULL);
-
-  g_mutex_lock (&fragment->priv->lock);
-  gst_caps_replace (&fragment->priv->caps, caps);
-  g_mutex_unlock (&fragment->priv->lock);
-}
-
-GstCaps *
-skippy_fragment_get_caps (SkippyFragment * fragment)
-{
-  g_return_val_if_fail (fragment != NULL, NULL);
-
-  if (!fragment->completed || fragment->priv->buffer == NULL) {
-    GST_WARNING ("Can't get caps of incomplete fragment");
-    return NULL;
-  }
-
-  GST_DEBUG ("Getting fragment caps ...");
-
-  g_mutex_lock (&fragment->priv->lock);
-  if (fragment->priv->caps == NULL) {
-    guint64 offset, offset_end;
-
-    /* FIXME: This is currently necessary as typefinding only
-     * works with 0 offsets... need to find a better way to
-     * do that */
-    offset = GST_BUFFER_OFFSET (fragment->priv->buffer);
-    offset_end = GST_BUFFER_OFFSET_END (fragment->priv->buffer);
-    GST_BUFFER_OFFSET (fragment->priv->buffer) = GST_BUFFER_OFFSET_NONE;
-    GST_BUFFER_OFFSET_END (fragment->priv->buffer) = GST_BUFFER_OFFSET_NONE;
-    fragment->priv->caps =
-        gst_type_find_helper_for_buffer (NULL, fragment->priv->buffer, NULL);
-    GST_BUFFER_OFFSET (fragment->priv->buffer) = offset;
-    GST_BUFFER_OFFSET_END (fragment->priv->buffer) = offset_end;
-  }
-  gst_caps_ref (fragment->priv->caps);
-  g_mutex_unlock (&fragment->priv->lock);
-
-  return fragment->priv->caps;
-}
-
-gboolean
-skippy_fragment_add_buffer (SkippyFragment * fragment, GstBuffer * buffer)
-{
-  g_return_val_if_fail (fragment != NULL, FALSE);
-  g_return_val_if_fail (buffer != NULL, FALSE);
-
-  g_mutex_lock (&fragment->priv->lock);
-
-  if (fragment->completed) {
-    GST_WARNING ("Fragment is completed, could not add more buffers");
-    g_mutex_unlock (&fragment->priv->lock);
-    return FALSE;
-  }
-
-  GST_DEBUG ("Adding new buffer to the fragment");
-  /* We steal the buffers you pass in */
-  if (fragment->priv->buffer == NULL)
-    fragment->priv->buffer = buffer;
-  else
-    fragment->priv->buffer = gst_buffer_append (fragment->priv->buffer, buffer);
-
-  GST_DEBUG ( "Set buffer pts=%" GST_TIME_FORMAT " duration=%" GST_TIME_FORMAT,
-    GST_TIME_ARGS (fragment->start_time), GST_TIME_ARGS (fragment->duration));
-
-  /* Update buffer properties */
-  GST_BUFFER_DURATION (fragment->priv->buffer) = fragment->duration;
-  GST_BUFFER_PTS (fragment->priv->buffer) = fragment->start_time;
-  GST_BUFFER_DTS (fragment->priv->buffer) = GST_CLOCK_TIME_NONE;
-
-  g_mutex_unlock (&fragment->priv->lock);
-  return TRUE;
-}
-
-void
-skippy_fragment_clear_buffer (SkippyFragment * fragment)
-{
-  g_return_if_fail (fragment != NULL);
-
-  g_mutex_lock (&fragment->priv->lock);
-  if (fragment->priv->buffer)
-    gst_buffer_unref (fragment->priv->buffer);
-  fragment->priv->buffer = NULL;
-  g_mutex_unlock (&fragment->priv->lock);
-}
-
-void
-skippy_fragment_complete (SkippyFragment * fragment, struct SkippyUriDownloader* downloader)
-{
-  g_return_if_fail (fragment != NULL);
-  g_return_if_fail (downloader != NULL);
 
   g_mutex_lock (&fragment->priv->lock);
   GST_DEBUG ("Completing fragment");
   fragment->completed = TRUE;
   fragment->download_stop_time = gst_util_get_timestamp ();
-  if (!fragment->decrypted) {
-    g_mutex_unlock (&fragment->priv->lock);
-    skippy_fragment_decrypt (fragment, downloader);
-    g_mutex_lock (&fragment->priv->lock);
-  }
   g_mutex_unlock (&fragment->priv->lock);
 }
 
+#if 0
 /* Decrypt a buffer */
 static gboolean
 decrypt_buffer (gsize length,
@@ -374,3 +243,5 @@ error:
   g_mutex_unlock (&fragment->priv->lock);
   return fragment->decrypted;
 }
+
+#endif

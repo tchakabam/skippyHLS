@@ -107,8 +107,6 @@ SkippyM3U8 * skippy_m3u8_client_get_current_variant (SkippyM3U8Client * client);
 
 guint64 skippy_m3u8_client_get_current_fragment_duration (SkippyM3U8Client * client);
 
-void skippy_m3u8_client_update_playlist_position (SkippyM3U8Client * client, guint64 target_pos, gboolean* need_segment);
-
 gboolean
 skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, GstBuffer* playlist_buffer);
 
