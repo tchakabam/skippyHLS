@@ -49,6 +49,7 @@ struct _SkippyUriDownloaderPrivate
   GError *err;
   GCond cond;
 
+  gboolean set_uri;
   gboolean fetching;
   gboolean discont;
 
@@ -97,40 +98,44 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
   GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
 
-static void
-skippy_uri_downloader_init (SkippyUriDownloader * downloader)
+// Returns true when we did create a source or one was present, FALSE in case of error (no source)
+static gboolean
+skippy_uri_downloader_create_src (SkippyUriDownloader * downloader, gchar* uri)
 {
   GError* err = NULL;
-  GstPadTemplate* templ = gst_static_pad_template_get (&srcpadtemplate);
+  GstPadTemplate* templ;
   GstPad* urisrcpad;
 
-  downloader->priv = SKIPPY_URI_DOWNLOADER_GET_PRIVATE (downloader);
-
+  GST_OBJECT_LOCK (downloader);
+  if (downloader->priv->urisrc) {
+    GST_OBJECT_UNLOCK (downloader);
+    return TRUE;
+  }
   // Create HTTP src
-  downloader->priv->urisrc = gst_element_make_from_uri (GST_URI_SRC, "http://", NULL, &err);
+  downloader->priv->urisrc = gst_element_make_from_uri (GST_URI_SRC, uri, NULL, &err);
   if (err) {
     GST_ERROR ("Could not create HTTP source: %s", err->message);
     g_clear_error (&err);
-    return;
+    GST_OBJECT_UNLOCK (downloader);
+    return FALSE;
   }
+  GST_OBJECT_UNLOCK (downloader);
 
   // Add URI source element to bin
   GST_DEBUG ("Added source: %s", GST_ELEMENT_NAME (downloader->priv->urisrc));
-  gst_bin_add (GST_BIN(downloader), downloader->priv->urisrc);
+
+  gst_bin_add (GST_BIN(downloader), GST_ELEMENT (downloader->priv->urisrc));
   // We want to lock the state of the URI src to manage stuff ourselves
-  gst_element_set_locked_state (downloader->priv->urisrc, TRUE);
+  gst_element_set_locked_state (GST_ELEMENT (downloader->priv->urisrc), TRUE);
   gst_element_set_state (downloader->priv->urisrc, GST_STATE_NULL);
 
-  // Our own buffer where we'll concatenate all the download into
-  downloader->priv->buffer = gst_buffer_new ();
-  /* Create a bus to handle error and warning message from the source element */
-  downloader->priv->bus = gst_bus_new ();
   /* add a sync handler for the bus messages to detect errors in the download */
   gst_element_set_bus (GST_ELEMENT (downloader->priv->urisrc), downloader->priv->bus);
   gst_bus_set_sync_handler (downloader->priv->bus, skippy_uri_downloader_bus_handler, downloader, NULL);
 
   // Add external source pad as ghost pad to URI src pad
   urisrcpad = gst_element_get_static_pad (downloader->priv->urisrc, "src");
+  templ = gst_static_pad_template_get (&srcpadtemplate);
   downloader->priv->srcpad = gst_ghost_pad_new_from_template ("src", urisrcpad, templ);
 
   // Configure external source pad
@@ -145,13 +150,27 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   gst_element_add_pad (GST_ELEMENT(downloader), downloader->priv->srcpad);
   gst_element_no_more_pads (GST_ELEMENT (downloader));
 
+  gst_object_unref (templ);
+  gst_object_unref (urisrcpad);
+  return TRUE;
+}
+
+static void
+skippy_uri_downloader_init (SkippyUriDownloader * downloader)
+{
+  downloader->priv = SKIPPY_URI_DOWNLOADER_GET_PRIVATE (downloader);
+
+  // set this to NULL explicitely
+  downloader->priv->urisrc = NULL;
+  // Our own buffer where we'll concatenate all the download into
+  downloader->priv->buffer = gst_buffer_new ();
+  /* Create a bus to handle error and warning message from the source element */
+  downloader->priv->bus = gst_bus_new ();
+
   // Reset private state fields
   skippy_uri_downloader_reset (downloader);
   // Init wait cond for blocking fetch call
   g_cond_init (&downloader->priv->cond);
-
-  gst_object_unref (templ);
-  gst_object_unref (urisrcpad);
 }
 
 void
@@ -167,13 +186,9 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
   downloader->priv->bytes_total = 0;
   downloader->priv->fetching = FALSE;
   downloader->priv->discont = FALSE;
+  downloader->priv->set_uri = FALSE;
 
-  // When there was an error we get rid of the source (should already be in NULL state)
-  if (downloader->priv->err && downloader->priv->urisrc) {
-    gst_object_unref (downloader->priv->urisrc);
-    downloader->priv->urisrc = NULL;
-  }
-  // Any way, clear error
+  // Clear error when present
   g_clear_error (&downloader->priv->err);
 
   // Unref fragment model & buffer
@@ -240,7 +255,14 @@ SkippyUriDownloader *
 skippy_uri_downloader_new ()
 {
   SkippyUriDownloader* downloader = g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, NULL);
+
   return downloader;
+}
+
+void
+skippy_uri_downloader_prepare (SkippyUriDownloader * downloader, gchar* uri)
+{
+  skippy_uri_downloader_create_src (downloader, uri);
 }
 
 GstPad* skippy_uri_download_get_src_pad (SkippyUriDownloader *downloader)
@@ -337,7 +359,7 @@ skippy_uri_downloader_src_event (GstPad * pad, GstObject * parent,
     case GST_EVENT_EOS:
       skippy_uri_downloader_handle_eos (downloader);
       gst_event_unref (event); // swallow event
-      return TRUE;
+      return FALSE;
     case GST_EVENT_SEGMENT:
       gst_event_parse_segment (event, &segment);
       // it's important we ALWAYS execute the default event handler here
@@ -360,13 +382,13 @@ skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader,
   gst_message_parse_error (message, &err, &dbg_info);
 
   // Log error
-  GST_ERROR_OBJECT (downloader,
+  GST_INFO_OBJECT (downloader,
       "URI source error: '%s' from %s, the download will be cancelled",
       err->message, GST_OBJECT_NAME (message->src));
 
   // Update error message with debug info
   if (dbg_info) {
-    GST_ERROR_OBJECT (downloader, "Error debug info: %s", dbg_info);
+    GST_DEBUG_OBJECT (downloader, "Error debug info: %s", dbg_info);
     full_message = g_strdup_printf ("%s\nERROR DEBUGGING INFO: {%s}", err->message, dbg_info);
     g_free (err->message);
     err->message = full_message;
@@ -532,13 +554,13 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
   GError* err = NULL;
   GObjectClass *gobject_class;
 
-  GST_DEBUG_OBJECT (downloader, "Setting URI: %s", uri);
-
   // Validate the URI
   if (!gst_uri_is_valid (uri)) {
     GST_WARNING ("URI is invalid");
     return FALSE;
   }
+
+  GST_DEBUG_OBJECT (downloader, "Setting URI: %s", uri);
 
   // Set URI
   if (!gst_uri_handler_set_uri (GST_URI_HANDLER (downloader->priv->urisrc), uri, &err)) {
@@ -546,6 +568,9 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
     g_clear_error (&err);
     return FALSE;
   }
+  downloader->priv->set_uri = TRUE;
+
+  GST_DEBUG ("URI has been applied to handler interface");
 
   // Configure source element accordingly
   gobject_class = G_OBJECT_GET_CLASS (downloader->priv->urisrc);
@@ -580,6 +605,7 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
 static void
 skippy_uri_downloader_unset_uri (SkippyUriDownloader * downloader)
 {
+  downloader->priv->set_uri = FALSE;
   if (downloader->priv->err) {
     /* set the element state to NULL if there was an error otherwise go back to READY state */
     GST_DEBUG ("Setting source element to NULL state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
@@ -593,7 +619,9 @@ skippy_uri_downloader_unset_uri (SkippyUriDownloader * downloader)
 static SkippyUriDownloaderFetchReturn
 skippy_uri_downloader_handle_failure (SkippyUriDownloader * downloader, GError ** err)
 {
-  skippy_uri_downloader_unset_uri (downloader);
+  if (downloader->priv->set_uri) {
+    skippy_uri_downloader_unset_uri (downloader);
+  }
   GST_OBJECT_LOCK (downloader);
   // Check for error from internal bus
   if (downloader->priv->err) {
@@ -611,18 +639,16 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
 {
   GstStateChangeReturn ret;
 
-  g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
+  g_return_val_if_fail (downloader, SKIPPY_URI_DOWNLOADER_FAILED);
   g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
 
   // We spare our consumer to explicitely reset us for re-usal
   skippy_uri_downloader_reset (downloader);
 
-  GST_OBJECT_LOCK (downloader);
-
-  g_object_ref (fragment);
-  // Storing the current fragment for cancellation
-  // Taking ownership, fragment should then only be accessed via the public functions of this object for MT-safety)
-  downloader->priv->fragment = fragment;
+  // Make sure we have our data source component set up and wired
+  if (!skippy_uri_downloader_create_src (downloader, fragment->uri)) {
+    return SKIPPY_URI_DOWNLOADER_FAILED;
+  }
 
   // Set URL
   if (!skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)) {
@@ -630,6 +656,13 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
     GST_OBJECT_UNLOCK (downloader);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
+
+  GST_OBJECT_LOCK (downloader);
+
+  g_object_ref (fragment);
+  // Storing the current fragment for cancellation
+  // Taking ownership, fragment should then only be accessed via the public functions of this object for MT-safety)
+  downloader->priv->fragment = fragment;
 
   GST_DEBUG ("Preparing data source ...");
   // Bootup source into READY state
@@ -679,7 +712,9 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   }
   downloader->priv->fetching = FALSE;
 
+  GST_OBJECT_UNLOCK (downloader);
   skippy_uri_downloader_unset_uri (downloader);
+  GST_OBJECT_LOCK (downloader);
 
   if (downloader->priv->err) {
     fragment->completed = FALSE;

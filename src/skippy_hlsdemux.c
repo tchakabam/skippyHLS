@@ -104,8 +104,6 @@ static void skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux);
 static SkippyFragment *skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
 static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose);
-static gboolean skippy_hls_demux_set_location (SkippyHLSDemux * demux,
-    const gchar * uri);
 static gboolean
 skippy_hls_demux_switch_bitrate (SkippyHLSDemux * demux, SkippyFragment * fragment);
 static void
@@ -224,9 +222,6 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   // Add bin elements
   gst_bin_add (GST_BIN (demux), demux->queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
-
-  // Link pads
-  skippy_hls_demux_link_pads (demux);
 
   // Props
   demux->bitrate_limit = DEFAULT_BITRATE_LIMIT;
@@ -523,7 +518,7 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
 }
 
 
-static gboolean
+static gchar*
 skippy_hls_demux_query_location (SkippyHLSDemux * demux)
 {
   GstQuery* query = gst_query_new_uri ();
@@ -540,17 +535,16 @@ skippy_hls_demux_query_location (SkippyHLSDemux * demux)
       g_free (uri);
       gst_query_parse_uri (query, &uri);
     }
-    skippy_hls_demux_set_location (demux, uri);
-    g_free (uri);
+    return uri;
   }
   gst_query_unref (query);
-  return ret;
+  return NULL;
 }
 
 static gboolean
 skippy_hls_demux_load_initial_playlist (SkippyHLSDemux* demux)
 {
-  gboolean ret;
+  gchar* uri;
 
   // No playlist - can't do anything
   if (demux->playlist == NULL) {
@@ -564,28 +558,36 @@ skippy_hls_demux_load_initial_playlist (SkippyHLSDemux* demux)
   skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, gst_util_get_timestamp (), 0);
 
   // Query the playlist URI
-  ret = skippy_hls_demux_query_location (demux);
-
-  // Parse playlist
-  if (!skippy_m3u8_client_load_playlist (demux->client, demux->playlist)) {
-    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
+  uri = skippy_hls_demux_query_location (demux);
+  if (!uri) {
+    GST_ELEMENT_ERROR (demux, RESOURCE, NOT_FOUND,
+        ("Failed querying the playlist URI"), (NULL));
     return FALSE;
   }
+  GST_INFO_OBJECT (demux, "M3U8 location: %s", uri);
 
-  // Playlist is live but failed to get source URI
-  if (!ret && skippy_m3u8_client_is_live (demux->client)) {
-    GST_ELEMENT_ERROR (demux, RESOURCE, NOT_FOUND,
-        ("Failed querying the playlist uri, "
-            "required for live sources."), (NULL));
+  // Parse playlist
+  demux->client = skippy_m3u8_client_new (uri);
+  if (!skippy_m3u8_client_load_playlist (demux->client, demux->playlist)) {
+    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
+    g_free (uri);
     return FALSE;
   }
 
   // Sets up the initial playlist (for when using a variant / sub-playlist)
   skippy_hls_demux_setup_playlist (demux);
 
+  // Make sure URI downloaders are ready asap
+  skippy_uri_downloader_prepare (demux->downloader, uri);
+  skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
+
+  // Link pads
+  skippy_hls_demux_link_pads (demux);
+
   // Start the main task
   gst_task_start (demux->stream_task);
 
+  g_free (uri);
   return TRUE;
 }
 
@@ -756,6 +758,11 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
 
   // Link downloader -> queue
   downloader_srcpad = gst_element_get_static_pad (GST_ELEMENT(demux->downloader), "src");
+  if (!downloader_srcpad) {
+    GST_DEBUG ("No src pad on downloader found yet");
+    return;
+  }
+
   gst_pad_link (downloader_srcpad, demux->queue_sinkpad);
   gst_object_unref (downloader_srcpad);
 
@@ -1064,16 +1071,6 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
   }
   g_object_unref (download);
   return ret;
-}
-
-static gboolean
-skippy_hls_demux_set_location (SkippyHLSDemux * demux, const gchar * uri)
-{
-  if (demux->client)
-    skippy_m3u8_client_free (demux->client);
-  demux->client = skippy_m3u8_client_new (uri);
-  GST_INFO_OBJECT (demux, "Set location: %s", uri);
-  return TRUE;
 }
 
 static void
