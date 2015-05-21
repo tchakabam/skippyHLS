@@ -215,11 +215,13 @@ skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
     skippy_fragment_complete (downloader->priv->download, (struct SkippyUriDownloader *) downloader);
     // FIXME: seems when data comes from filesystem caches we can get less data than the segment advertises (encryption padding?)
     // Make sure we send a 100% callback and have a valid byte number
-    downloader->priv->bytes_loaded = downloader->priv->bytes_total;
-    downloader->priv->callback (downloader,
-      downloader->priv->download->start_time, downloader->priv->download->stop_time,
-      downloader->priv->bytes_loaded, downloader->priv->bytes_total
-    );
+    if (downloader->priv->bytes_loaded != downloader->priv->bytes_total) {
+      downloader->priv->bytes_loaded = downloader->priv->bytes_total;
+      downloader->priv->callback (downloader,
+        downloader->priv->download->start_time, downloader->priv->download->stop_time,
+        downloader->priv->bytes_loaded, downloader->priv->bytes_total
+      );
+    }
     GST_DEBUG_OBJECT (downloader, "Signaling chain funtion");
     g_cond_signal (&downloader->priv->cond);
   }
