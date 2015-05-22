@@ -98,6 +98,7 @@ static gboolean skippy_hls_demux_src_event (GstPad * pad, GstObject * parent,
     GstEvent * event);
 static gboolean skippy_hls_demux_src_query (GstPad * pad, GstObject * parent,
     GstQuery * query);
+static gboolean skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event);
 static void skippy_hls_demux_stream_loop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_stop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux);
@@ -252,8 +253,6 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
   demux->group_id = G_MAXUINT;
   demux->next_update = -1;
 
-  gst_segment_init (&demux->segment, GST_FORMAT_TIME);
-
   if (demux->playlist) {
     gst_buffer_unref (demux->playlist);
     demux->playlist = NULL;
@@ -344,7 +343,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   GstStateChangeReturn ret;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
 
-  GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
+  GST_TRACE ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
 
   switch (transition) {
@@ -360,124 +359,11 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
   }
 
-  GST_DEBUG ("Calling parent class state change handler ...");
+  GST_TRACE ("Calling parent class state change handler ...");
   ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
-  GST_DEBUG ("State transition result: %s", gst_element_state_change_return_get_name (ret));
+  GST_TRACE ("State transition result: %s", gst_element_state_change_return_get_name (ret));
 
   return ret;
-}
-
-static gboolean
-skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
-{
-  gdouble rate;
-  GstFormat format;
-  GstSeekFlags flags;
-  GstSeekType start_type, stop_type;
-  gint64 start, stop;
-  GList *walk;
-  GstClockTime current_pos, target_pos;
-  gint current_sequence;
-  SkippyM3U8MediaFile *file;
-
-  GST_INFO ("Received GST_EVENT_SEEK");
-
-  // Not seeking on a live stream
-  if (skippy_m3u8_client_is_live (demux->client)) {
-    GST_WARNING_OBJECT (demux, "Received seek event for live stream");
-    gst_event_unref (event);
-    return FALSE;
-  }
-  // Parse seek event
-  gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start,
-      &stop_type, &stop);
-  if (format != GST_FORMAT_TIME) {
-    GST_WARNING ("Received seek event not in time format");
-    gst_event_unref (event);
-    return FALSE;
-  }
-
-  GST_DEBUG_OBJECT (demux, "seek event, rate: %f start: %" GST_TIME_FORMAT
-      " stop: %" GST_TIME_FORMAT, rate, GST_TIME_ARGS (start),
-      GST_TIME_ARGS (stop));
-
-  /* Walk the stream data model */
-  SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-  file = SKIPPY_M3U8_MEDIA_FILE (demux->client->current->files->data);
-  current_sequence = file->sequence;
-  current_pos = 0;
-  target_pos = (GstClockTime) start;
-  /* FIXME: Here we need proper discont handling */
-  for (walk = demux->client->current->files; walk; walk = walk->next) {
-    file = walk->data;
-
-    current_sequence = file->sequence;
-    if (current_pos <= target_pos
-        && target_pos < current_pos + file->duration) {
-      break;
-    }
-    current_pos += file->duration;
-  }
-  SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
-
-  // If we seeked over duration just increment the sequence
-  if (walk == NULL) {
-    GST_DEBUG_OBJECT (demux, "seeking further than track duration");
-    current_sequence++;
-  }
-
-  // Flush start
-  if (flags & GST_SEEK_FLAG_FLUSH) {
-    GST_DEBUG_OBJECT (demux, "sending flush start");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
-  }
-
-  // Pausing streaming task
-  skippy_hls_demux_pause_tasks (demux);
-
-  // Updating data model
-  SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-  GST_DEBUG_OBJECT (demux, "seeking to sequence %d", current_sequence);
-  demux->client->sequence = current_sequence;
-  demux->client->sequence_position = current_pos;
-  SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
-
-  // Update data segment
-  gst_segment_do_seek (&demux->segment, rate, format, flags, start_type,
-      start, stop_type, stop, NULL);
-  demux->seeked = TRUE;
-
-  // Flush stop
-  if (flags & GST_SEEK_FLAG_FLUSH) {
-    GST_DEBUG_OBJECT (demux, "sending flush stop");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
-  }
-
-  // Restart the streaming task
-  gst_task_start (demux->stream_task);
-
-  GST_DEBUG ("Restarted streaming task");
-
-  // Swallow event
-  gst_event_unref (event);
-  return TRUE;
-}
-
-static gboolean
-skippy_hls_demux_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
-{
-  SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (parent);
-
-  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
-
-  switch (event->type) {
-    case GST_EVENT_SEEK:
-      return skippy_hls_demux_seek (demux, event);
-    default:
-      break;
-  }
-
-  return gst_pad_event_default (pad, parent, event);
 }
 
 static void
@@ -516,7 +402,6 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
   gst_element_post_message (GST_ELEMENT_CAST (demux),
     gst_message_new_element (GST_OBJECT_CAST (demux), structure));
 }
-
 
 static gchar*
 skippy_hls_demux_query_location (SkippyHLSDemux * demux)
@@ -653,6 +538,122 @@ skippy_hls_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
   }
 
   return gst_pad_event_default (pad, parent, event);
+}
+
+static gboolean
+skippy_hls_demux_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
+{
+  SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (parent);
+
+  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
+
+  switch (event->type) {
+    case GST_EVENT_SEEK:
+      return skippy_hls_demux_seek (demux, event);
+    default:
+      break;
+  }
+
+  return gst_pad_event_default (pad, parent, event);
+}
+
+static gboolean
+skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
+{
+  gdouble rate;
+  GstFormat format;
+  GstSeekFlags flags;
+  GstSeekType start_type, stop_type;
+  gint64 start, stop;
+  GList *walk;
+  GstClockTime current_pos, target_pos;
+  gint current_sequence;
+  SkippyM3U8MediaFile *file;
+  GstSegment segment;
+
+  GST_INFO ("Received GST_EVENT_SEEK");
+
+  // Not seeking on a live stream
+  if (skippy_m3u8_client_is_live (demux->client)) {
+    GST_WARNING_OBJECT (demux, "Received seek event for live stream");
+    gst_event_unref (event);
+    return FALSE;
+  }
+  // Parse seek event
+  gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start,
+      &stop_type, &stop);
+  if (format != GST_FORMAT_TIME) {
+    GST_WARNING ("Received seek event not in time format");
+    gst_event_unref (event);
+    return FALSE;
+  }
+
+  GST_DEBUG_OBJECT (demux, "Seek event, rate: %f start: %" GST_TIME_FORMAT
+      " stop: %" GST_TIME_FORMAT, rate, GST_TIME_ARGS (start),
+      GST_TIME_ARGS (stop));
+
+  /* Walk the stream data model */
+  SKIPPY_M3U8_CLIENT_LOCK (demux->client);
+  file = SKIPPY_M3U8_MEDIA_FILE (demux->client->current->files->data);
+  current_sequence = file->sequence;
+  current_pos = 0;
+  target_pos = (GstClockTime) start;
+  /* FIXME: Here we need proper discont handling */
+  for (walk = demux->client->current->files; walk; walk = walk->next) {
+    file = walk->data;
+
+    current_sequence = file->sequence;
+    if (current_pos <= target_pos
+        && target_pos < current_pos + file->duration) {
+      break;
+    }
+    current_pos += file->duration;
+  }
+  SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
+
+  // If we seeked over duration just increment the sequence
+  if (walk == NULL) {
+    GST_DEBUG_OBJECT (demux, "Seeking further than track duration");
+    current_sequence++;
+  }
+
+  // Flush start
+  if (flags & GST_SEEK_FLAG_FLUSH) {
+    GST_DEBUG_OBJECT (demux, "Sending flush start");
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
+  }
+
+  // Pausing streaming task
+  skippy_hls_demux_pause_tasks (demux);
+
+  // Updating data model
+  SKIPPY_M3U8_CLIENT_LOCK (demux->client);
+  GST_DEBUG_OBJECT (demux, "Seeking to sequence %d", current_sequence);
+  demux->client->sequence = current_sequence;
+  demux->client->sequence_position = current_pos;
+  SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
+
+  // Update data segment structure for seek
+  segment = skippy_uri_downloader_get_segment (demux->downloader);
+  gst_segment_do_seek (&segment, rate, format, flags, start_type,
+      start, stop_type, stop, NULL);
+  skippy_uri_downloader_set_segment (demux->downloader, segment);
+  demux->seeked = TRUE;
+
+  // Flush stop
+  if (flags & GST_SEEK_FLAG_FLUSH) {
+    GST_DEBUG_OBJECT (demux, "Sending flush stop");
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
+  }
+
+  // Restart the streaming task
+  gst_task_start (demux->stream_task);
+
+  GST_DEBUG ("Restarted streaming task");
+
+  // Swallow event
+  gst_event_unref (event);
+  return TRUE;
 }
 
 static gboolean
@@ -817,42 +818,18 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
 }
 
 static gboolean
-skippy_hls_send_segment_event (SkippyHLSDemux * demux, SkippyFragment* fragment)
-{
-  guint queue_level;
-
-  GST_DEBUG_OBJECT (demux, "Pushing fragment at %ld - %ld ms",
-    (long int) fragment->start_time / GST_MSECOND, (long int) fragment->stop_time / GST_MSECOND);
-
-  // Updating current data segment properties
-  demux->segment.position = 0;
-  demux->segment.start = fragment->start_time;
-  demux->segment.stop = fragment->stop_time;
-  demux->segment.duration = fragment->duration;
-  demux->seeked = FALSE;
-
-  // Sending segment event
-  GST_DEBUG_OBJECT (demux, "Sending segment event: %" GST_SEGMENT_FORMAT, &demux->segment);
-
-  // Push the segment event onto the queue
-  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_segment (&demux->segment));
-
-  // Monitor queue levels
-  g_object_get (demux->queue, "current-level-buffers", &queue_level, NULL);
-  GST_DEBUG ("Current internal queue level: %d buffers", (int) queue_level);
-  return TRUE;
-}
-
-static gboolean
 skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
 {
   GstFormat format;
   gint64 pos;
   GstQuery* query;
   gboolean query_ret;
+  GstSegment segment;
 
   // Check upfront position relative to stream position
   if (demux->srcpad) {
+
+    // Query current playback position from downstream
     query = gst_query_new_position (GST_FORMAT_TIME);
     query_ret = gst_pad_peer_query (demux->srcpad, query);
     if (query_ret) {
@@ -870,10 +847,14 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
       // when pipeline position has some undefined state (as observed)
       pos = 0;
     }
+
     GST_DEBUG ("Buffer ahead duration is %d seconds", (int) demux->buffer_ahead_duration_secs);
-    if (!demux->seeked && demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
+
+    // Get current media segment properties from downloader
+    segment = skippy_uri_downloader_get_segment (demux->downloader);
+    if (!demux->seeked && segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
       GST_LOG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)",
-        ((float) demux->segment.position) / GST_SECOND);
+        ((float) segment.position) / GST_SECOND);
       g_usleep (POLL_PERIOD);
       return FALSE;
     }
@@ -888,35 +869,42 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
   GstState current_state, pending_state;
+  guint queue_level;
 
   GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");
 
   gst_element_get_state (GST_ELEMENT(demux), &current_state, &pending_state, GST_CLOCK_TIME_NONE);
 
-  GST_DEBUG ("Current state: %s, Pending state: %s",
+  GST_TRACE ("Current state: %s, Pending state: %s",
     gst_element_state_get_name (current_state),
     gst_element_state_get_name (pending_state));
 
+  // Monitor queue levels
+  g_object_get (demux->queue, "current-level-buffers", &queue_level, NULL);
+  GST_DEBUG ("Current internal queue level: %d buffers", (int) queue_level);
+
+  // Check current playback position against buffer levels
   if (!skippy_hls_check_buffer_ahead (demux)) {
     return;
   }
-
   GST_DEBUG ("Will fetch next fragment ...");
 
-  /* Handle failure to get the next fragment */
+  // Try to push the next fragment ...
   fragment = skippy_hls_demux_push_next_fragment (demux, &fetch_ret, &err);
 
+  // Handle result from current attempt
   switch (fetch_ret) {
+  // This case means the download did not do anything
   case SKIPPY_URI_DOWNLOADER_VOID:
     // Error & fragment should be NULL
     g_return_if_fail (!err);
-    GST_DEBUG ("Got NULL as next fragment");
+    g_return_if_fail (!fragment);
+    GST_DEBUG ("Did get NULL as next fragment");
     if (skippy_m3u8_client_is_live (demux->client)) {
       GST_DEBUG_OBJECT (demux, "No fragment left but live playlist, retrying later");
     } else {
       skippy_hls_handle_end_of_playlist (demux);
     }
-    // We can exit just like that (err == NULL)
     break;
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
     g_return_if_fail (!err);
@@ -941,20 +929,25 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
     g_return_if_fail (!err);
-    g_return_if_fail (fragment);
     GST_DEBUG ("Got next fragment");
-    //
-    //gst_element_set_state (GST_ELEMENT (demux), GST_STATE_PLAYING);
+    // Post stats message
+    skippy_hls_demux_post_stat_msg (demux,
+      STAT_TIME_TO_DOWNLOAD_FRAGMENT,
+      fragment->download_stop_time - fragment->download_start_time,
+      fragment->size);
     // Reset failure counter
     demux->download_failed_count = 0;
-    // Drop current fragment in any case
-    g_object_unref (fragment);
     // Go to next fragment
     skippy_m3u8_client_advance_fragment (demux->client);
     break;
   }
 
   GST_DEBUG_OBJECT (demux, "Exiting task now ...");
+
+  // Drop fragment ref in any case
+  if (fragment) {
+    g_object_unref (fragment);
+  }
 
   // Handle error
   if (err) {
@@ -964,60 +957,36 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
 }
 
-/* Interacts with M3U8 client and URI downloader to provide next fragment to streaming loop,
-measures download speed, posts stat message and decrypt fragment buffer, triggers bitrate switching */
-static SkippyFragment *
-skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn *fetch_ret, GError ** err)
+static SkippyFragment*
+skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn *fetch_ret, GError **err)
 {
-  GstStructure *stat_msg;
   gboolean allow_cache = demux->caching_enabled;
   SkippyFragment* fragment;
 
   g_return_val_if_fail (*err == NULL, NULL);
 
+  // Get next fragment from M3U8 list
   fragment = skippy_m3u8_client_get_next_fragment (demux->client);
   if (!fragment) {
     GST_INFO_OBJECT (demux, "This playlist doesn't contain more fragments");
-    *fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
     return NULL;
   }
-
-  // First let's issue a segment event based on what we will push here
-  //skippy_hls_send_segment_event (demux, fragment);
 
   GST_INFO_OBJECT (demux,
       "Fetching next fragment %s (range=%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT
       ")", fragment->uri, fragment->range_start, fragment->range_end);
 
+  // Tell download to push data
   *fetch_ret = skippy_uri_downloader_fetch_fragment (demux->downloader,
     fragment, // Media fragment to load
     demux->client->main ? demux->client->main->uri : NULL, // Referrer
     FALSE, // Compress (useless with coded media data)
-    FALSE, // Refresh (don't wipe out cache)
+    FALSE, // Refresh disabled (don't wipe out cache)
     demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache, // Allow caching directive
-    err // Error
+    err // NOTE: We don't want to handle the error here, we just pass it in and let it be handled by our caller
   );
-  // NOTE: We don't want to handle the error here, we just pass it in and let it be handled by our caller
-
-  // If it's not useable just return NULL
-  if (!fragment->completed) {
-    GST_INFO ("Fragment incomplete");
-    g_object_unref (fragment);
-    return NULL;
-  }
-  if (!fragment->decrypted) {
-    GST_ERROR ("Fragment not decrypted");
-    g_object_unref (fragment);
-    return NULL;
-  }
-
-  skippy_hls_demux_post_stat_msg (demux,
-    STAT_TIME_TO_DOWNLOAD_FRAGMENT,
-    fragment->download_stop_time - fragment->download_start_time,
-    fragment->size);
 
   GST_DEBUG ("Returning finished fragment");
-
   return fragment;
 }
 
@@ -1032,7 +1001,7 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
   gboolean ret = FALSE;
 
   // Create a download
-  download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client), NULL, NULL);
+  download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client));
   // Download it
   fetch_ret = skippy_uri_downloader_fetch_fragment (demux->playlist_downloader,
     download, // Media fragment to load

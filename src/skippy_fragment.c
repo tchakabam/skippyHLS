@@ -80,25 +80,18 @@ skippy_fragment_init (SkippyFragment * fragment)
   fragment->completed = FALSE;
   fragment->cancelled = FALSE;
   fragment->discontinuous = FALSE;
-  fragment->decrypted = TRUE;
   fragment->size = 0;
 }
 
 SkippyFragment *
-skippy_fragment_new (const gchar* uri, gchar* key_uri, guint8* iv)
+skippy_fragment_new (const gchar* uri)
 {
   SkippyFragment* fragment;
 
   g_return_val_if_fail (uri, NULL);
-  g_return_val_if_fail (!key_uri || key_uri && iv, NULL);
 
   fragment = SKIPPY_FRAGMENT (g_object_new (TYPE_SKIPPY_FRAGMENT, NULL));
   fragment->uri = g_strdup (uri);
-  if (key_uri) {
-    fragment->decrypted = FALSE;
-    fragment->key_uri = g_strdup (key_uri);
-    memcpy (fragment->iv, iv, sizeof (fragment->iv));
-  }
   return fragment;
 }
 

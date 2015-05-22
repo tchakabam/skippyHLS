@@ -55,7 +55,6 @@ struct _SkippyFragment
   guint64 duration;              /* Media fragment duration */
   gboolean index;                /* Index of the fragment */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
-  gboolean decrypted;
   gsize size;
 
   SkippyFragmentPrivate *priv;
@@ -67,7 +66,7 @@ struct _SkippyFragmentClass
 };
 
 GType skippy_fragment_get_type (void);
-SkippyFragment * skippy_fragment_new (const gchar* uri, gchar* key_uri, guint8* iv);
+SkippyFragment * skippy_fragment_new (const gchar* uri);
 void skippy_fragment_set_completed (SkippyFragment * fragment);
 
 G_END_DECLS

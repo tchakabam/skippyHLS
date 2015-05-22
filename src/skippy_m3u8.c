@@ -652,7 +652,7 @@ _find_current (SkippyM3U8MediaFile * file, SkippyM3U8Client * client)
 static gboolean
 _find_next (SkippyM3U8MediaFile * file, SkippyM3U8Client * client)
 {
-  GST_DEBUG ("Found fragment %d", file->sequence);
+  GST_TRACE ("Found fragment %d", file->sequence);
   if (file->sequence >= client->sequence)
     return FALSE;
   return TRUE;
@@ -681,7 +681,7 @@ skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client)
   GST_DEBUG ("Got fragment with sequence %u (client sequence %u)",
       file->sequence, client->sequence);
 
-  fragment = skippy_fragment_new (file->uri, file->key, file->iv);
+  fragment = skippy_fragment_new (file->uri);
   fragment->start_time = client->sequence_position;
   fragment->stop_time = client->sequence_position + file->duration;
   fragment->duration = file->duration;

@@ -78,7 +78,6 @@ struct _SkippyHLSDemux
   GRecMutex stream_lock;
 
   /* Internal state */
-  GstSegment segment;
   GstClockTime duration; // cache for the duration computation of the M3U8 client
   gboolean have_group_id;
   guint group_id;

@@ -45,6 +45,7 @@ struct _SkippyUriDownloaderPrivate
   GstBus *bus;
   GstPad *srcpad;
   GstBuffer *buffer;
+  GstSegment segment;
 
   GError *err;
   GCond cond;
@@ -63,23 +64,15 @@ static void skippy_uri_downloader_dispose (GObject * object);
 static GstStateChangeReturn
 skippy_uri_downloader_change_state (GstElement * element, GstStateChange transition);
 
-static gboolean skippy_uri_downloader_src_event (GstPad * pad, GstObject * parent,
-    GstEvent * event);
-
 static GstPadProbeReturn
-skippy_uri_downloader_src_buffer_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
+skippy_uri_downloader_src_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 
 static GstBusSyncReply skippy_uri_downloader_bus_handler (GstBus * bus,
     GstMessage * message, gpointer data);
 
-static GstStaticPadTemplate sinkpadtemplate = GST_STATIC_PAD_TEMPLATE ("sink",
-    GST_PAD_SINK,
-    GST_PAD_ALWAYS,
-    GST_STATIC_CAPS_ANY);
-
 static GstStaticPadTemplate srcpadtemplate = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
-    GST_PAD_ALWAYS,
+    GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
 
 static void
@@ -128,24 +121,22 @@ skippy_uri_downloader_create_src (SkippyUriDownloader * downloader, gchar* uri)
   // We want to lock the state of the URI src to manage stuff ourselves
   gst_element_set_locked_state (GST_ELEMENT (downloader->priv->urisrc), TRUE);
   gst_element_set_state (downloader->priv->urisrc, GST_STATE_NULL);
-
-  /* add a sync handler for the bus messages to detect errors in the download */
+  // add a sync handler for the bus messages to detect errors in the download
   gst_element_set_bus (GST_ELEMENT (downloader->priv->urisrc), downloader->priv->bus);
   gst_bus_set_sync_handler (downloader->priv->bus, skippy_uri_downloader_bus_handler, downloader, NULL);
 
-  // Add external source pad as ghost pad to URI src pad
+  // Get URI src pad
   urisrcpad = gst_element_get_static_pad (downloader->priv->urisrc, "src");
+  // Add probe to URI src pad
+  gst_pad_add_probe (urisrcpad, GST_PAD_PROBE_TYPE_ALL_BOTH,
+    skippy_uri_downloader_src_probe, downloader, NULL);
+  // Add external source pad as ghost pad to URI src pad
   templ = gst_static_pad_template_get (&srcpadtemplate);
   downloader->priv->srcpad = gst_ghost_pad_new_from_template ("src", urisrcpad, templ);
 
   // Configure external source pad
   gst_pad_set_active (downloader->priv->srcpad, TRUE);
-  gst_pad_set_event_function (downloader->priv->srcpad, skippy_uri_downloader_src_event);
-  // Add blocking buffer probe
-  /*
-  gst_pad_add_probe (downloader->priv->srcpad, GST_PAD_PROBE_TYPE_BUFFER,
-    skippy_uri_downloader_src_buffer_probe, downloader, NULL);
-*/
+
   // Add pad to element
   gst_element_add_pad (GST_ELEMENT(downloader), downloader->priv->srcpad);
   gst_element_no_more_pads (GST_ELEMENT (downloader));
@@ -167,10 +158,14 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   /* Create a bus to handle error and warning message from the source element */
   downloader->priv->bus = gst_bus_new ();
 
-  // Reset private state fields
-  skippy_uri_downloader_reset (downloader);
   // Init wait cond for blocking fetch call
   g_cond_init (&downloader->priv->cond);
+
+  // Reset segment completely
+  gst_segment_init (&downloader->priv->segment, GST_FORMAT_TIME);
+
+  // Reset private state fields
+  skippy_uri_downloader_reset (downloader);
 }
 
 void
@@ -222,6 +217,9 @@ skippy_uri_downloader_dispose (GObject * object)
     downloader->priv->bus = NULL;
   }
 
+  // Turn off data src explicitely
+  gst_element_set_state (downloader->priv->urisrc, GST_STATE_NULL);
+
   // Dispose base class
   G_OBJECT_CLASS (skippy_uri_downloader_parent_class)->dispose (object);
 }
@@ -265,16 +263,6 @@ skippy_uri_downloader_prepare (SkippyUriDownloader * downloader, gchar* uri)
   skippy_uri_downloader_create_src (downloader, uri);
 }
 
-GstPad* skippy_uri_download_get_src_pad (SkippyUriDownloader *downloader)
-{
-  g_return_val_if_fail (downloader, NULL);
-
-  if (downloader->priv->urisrc) {
-    return gst_element_get_static_pad (downloader->priv->urisrc, "src");
-  }
-  return NULL;
-}
-
 static void
 skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
   guint64 start_time, guint64 stop_time,
@@ -302,17 +290,18 @@ skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
   );
   gst_element_post_message (GST_ELEMENT (downloader),
     gst_message_new_element (GST_OBJECT(downloader), s));
-
 }
 
 static void
 skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
 {
-  GST_DEBUG_OBJECT (downloader, "Got EOS on the fetcher pad");
+  GST_DEBUG_OBJECT (downloader, "Got EOS on the data source");
   GST_OBJECT_LOCK (downloader);
   if (downloader->priv->err) {
     GST_WARNING ("Got EOS but error: %s", downloader->priv->err->message);
   } else if (downloader->priv->fragment != NULL) {
+    // Updating current data segment properties
+    downloader->priv->segment.position += downloader->priv->fragment->duration;
     skippy_fragment_set_completed (downloader->priv->fragment);
     // FIXME: seems when data comes from filesystem caches we can get less data than the segment advertises (encryption padding?)
     // Make sure we send a 100% callback and have a valid byte number
@@ -330,7 +319,7 @@ skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
 }
 
 static gboolean
-skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, const GstSegment* segment)
+skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, GstSegment* segment)
 {
   GST_OBJECT_LOCK (downloader);
   if (segment->format == GST_FORMAT_BYTES) {
@@ -343,32 +332,6 @@ skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, cons
   }
   GST_OBJECT_UNLOCK (downloader);
   return TRUE;
-}
-
-static gboolean
-skippy_uri_downloader_src_event (GstPad * pad, GstObject * parent,
-    GstEvent * event)
-{
-  SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (parent);
-  const GstSegment* segment = NULL;
-  GstCaps* caps;
-
-  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
-
-  switch (event->type) {
-    case GST_EVENT_EOS:
-      skippy_uri_downloader_handle_eos (downloader);
-      gst_event_unref (event); // swallow event
-      return FALSE;
-    case GST_EVENT_SEGMENT:
-      gst_event_parse_segment (event, &segment);
-      // it's important we ALWAYS execute the default event handler here
-      // therefore this call needs to be here FIRST, before the actual handler
-      return gst_pad_event_default (pad, parent, event)
-      && skippy_uri_downloader_handle_data_segment (downloader, segment);
-    default:
-      return gst_pad_event_default (pad, parent, event);
-  }
 }
 
 static void
@@ -427,18 +390,17 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
 {
   SkippyUriDownloader *downloader = (SkippyUriDownloader *) (data);
 
-  if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
+  GST_DEBUG ("Got %" GST_PTR_FORMAT, message);
 
+  if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
     skippy_uri_downloader_handle_error (downloader,
                                         message);
 
   } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_WARNING) {
-
     skippy_uri_downloader_handle_warning (downloader,
                                         message);
 
   } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
-
     gst_element_post_message (GST_ELEMENT(downloader), gst_message_ref(message));
 
   }
@@ -448,56 +410,107 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
 }
 
 static GstPadProbeReturn
-skippy_uri_downloader_src_buffer_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+skippy_uri_downloader_src_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
 {
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (user_data);
-  GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
-  gsize bytes;
 
-  if (GST_PAD_PROBE_INFO_TYPE(info) != GST_PAD_PROBE_TYPE_BUFFER) {
-    return GST_PAD_PROBE_OK;
+  //
+  // Probe buffers
+  //
+  if (GST_IS_BUFFER (info->data)) {
+
+    GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
+    gsize bytes;
+
+    GST_DEBUG ("Got %" GST_PTR_FORMAT, buf);
+
+    //GST_OBJECT_LOCK (downloader);
+
+    /* NOTE: HTTP errors (404, 500, etc...) are also pushed through this pad as
+     * response but the source element will also post a warning or error message
+     * in the bus, which is handled synchronously cancelling the download.
+     */
+    // There was an error downloading, quit quietly
+    if (downloader->priv->err) {
+      GST_DEBUG ("Detected error, dropping item");
+      return GST_PAD_PROBE_DROP;
+    }
+
+    // Get size of buffer
+    bytes = gst_buffer_get_size (buf);
+
+    GST_TRACE_OBJECT (downloader, "The uri fetcher received a new buffer of size %" G_GSIZE_FORMAT, bytes);
+
+    GST_OBJECT_LOCK (downloader);
+
+    g_return_val_if_fail (downloader->priv->fragment, FALSE);
+
+    // Increment size on fragment model
+    downloader->priv->fragment->size += bytes;
+
+    // Count bytes and trigger callback
+    downloader->priv->bytes_loaded += bytes;
+
+    GST_OBJECT_UNLOCK (downloader);
+    skippy_uri_downloader_handle_bytes_received (downloader,
+      downloader->priv->fragment->start_time, downloader->priv->fragment->stop_time,
+      downloader->priv->bytes_loaded, downloader->priv->bytes_total);
+    GST_OBJECT_LOCK (downloader);
+
+    if (!downloader->priv->discont) {
+      GST_DEBUG ("Marking buffer as discontinuous");
+      GST_BUFFER_PTS (buf) = downloader->priv->segment.position;
+      GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
+      // We should do this only once per downloaded fragment
+      downloader->priv->discont = TRUE;
+    } else {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
+    }
+
+    // Copy and append buffer to download aggregate
+    //downloader->priv->buffer = gst_buffer_append (downloader->priv->buffer, gst_buffer_copy(buf));
+
+    GST_OBJECT_UNLOCK (downloader);
+
+  //
+  // Probe events
+  //
+  } else if (GST_IS_EVENT (info->data)) {
+
+    GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+
+    GstSegment bytes_segment;
+    GstEvent* segment_event;
+
+    GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
+
+    switch (GST_EVENT_TYPE(event)) {
+    case GST_EVENT_SEGMENT:
+      gst_event_copy_segment (event, &bytes_segment);
+      skippy_uri_downloader_handle_data_segment (downloader, &bytes_segment);
+
+      // Check for current fragment and replace event data
+      g_return_val_if_fail (downloader->priv->fragment, FALSE);
+      GST_DEBUG ("Pushing fragment at %ld - %ld ms",
+        (long int) downloader->priv->fragment->start_time / GST_MSECOND,
+        (long int) downloader->priv->fragment->stop_time / GST_MSECOND
+      );
+      // Create new segment event
+      segment_event = gst_event_new_segment (&downloader->priv->segment);
+      gst_event_set_seqnum (segment_event, gst_event_get_seqnum(event));
+      // Replace data and drop old event
+      GST_PAD_PROBE_INFO_DATA(info) = segment_event;
+      gst_event_unref(event);
+      GST_DEBUG ("Replaced by %" GST_PTR_FORMAT, segment_event);
+      break;
+    case GST_EVENT_EOS:
+      skippy_uri_downloader_handle_eos (downloader);
+      return GST_PAD_PROBE_DROP;
+    default:
+      break;
+    }
   }
 
-  GST_OBJECT_LOCK (downloader);
-
-  /* NOTE: HTTP errors (404, 500, etc...) are also pushed through this pad as
-   * response but the source element will also post a warning or error message
-   * in the bus, which is handled synchronously cancelling the download.
-   */
-  // There was an error downloading, quit quietly
-  if (downloader->priv->err) {
-    return GST_PAD_PROBE_DROP;
-  }
-
-  // Get size of buffer
-  bytes = gst_buffer_get_size (buf);
-
-  GST_TRACE_OBJECT (downloader, "The uri fetcher received a new buffer of size %" G_GSIZE_FORMAT, bytes);
-
-  // Increment size on fragment model
-  downloader->priv->fragment->size += bytes;
-
-  // Count bytes and trigger callback
-  downloader->priv->bytes_loaded += bytes;
-
-  skippy_uri_downloader_handle_bytes_received (downloader,
-    downloader->priv->fragment->start_time, downloader->priv->fragment->stop_time,
-    downloader->priv->bytes_loaded, downloader->priv->bytes_total);
-
-  // Flagging buffer as discontinuous if fragment is flagged as discont
-  if (downloader->priv->fragment->discontinuous && !downloader->priv->discont) {
-    GST_DEBUG ("Marking buffer as discontinuous");
-    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
-    // We should do this only once per downloaded fragment
-    downloader->priv->discont = TRUE;
-  } else {
-    GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
-  }
-
-  // Copy and append buffer to download aggregate
-  downloader->priv->buffer = gst_buffer_append (downloader->priv->buffer, gst_buffer_copy(buf));
-
-  GST_OBJECT_UNLOCK (downloader);
   return GST_PAD_PROBE_OK;
 }
 
@@ -508,6 +521,22 @@ GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader)
   buf = gst_buffer_ref(downloader->priv->buffer);
   GST_OBJECT_UNLOCK (downloader);
   return buf;
+}
+
+void skippy_uri_downloader_set_segment (SkippyUriDownloader *downloader, GstSegment segment)
+{
+  GST_OBJECT_LOCK (downloader);
+  downloader->priv->segment = segment;
+  GST_OBJECT_UNLOCK (downloader);
+}
+
+GstSegment skippy_uri_downloader_get_segment (SkippyUriDownloader *downloader)
+{
+  GstSegment segment;
+  GST_OBJECT_LOCK (downloader);
+  segment = downloader->priv->segment;
+  GST_OBJECT_UNLOCK (downloader);
+  return segment;
 }
 
 void
