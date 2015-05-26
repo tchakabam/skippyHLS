@@ -93,6 +93,8 @@ void skippy_m3u8_client_set_current (SkippyM3U8Client * client, SkippyM3U8 * m3u
 
 // Called by SkippyHLSDemux to get the next fragment
 SkippyFragment* skippy_m3u8_client_get_next_fragment (SkippyM3U8Client * client);
+void skippy_m3u8_client_seek (SkippyM3U8Client * client, GstClockTime target_pos);
+gboolean skippy_m3u8_client_init_playlist (SkippyM3U8Client * client, guint connection_speed);
 
 void skippy_m3u8_client_advance_fragment (SkippyM3U8Client * client);
 GstClockTime skippy_m3u8_client_get_duration (SkippyM3U8Client * client);

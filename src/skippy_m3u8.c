@@ -970,3 +970,60 @@ skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, GstBuffer* playlist
   return TRUE;
 }
 
+gboolean
+skippy_m3u8_client_init_playlist (SkippyM3U8Client * client, guint connection_speed)
+{
+  SkippyM3U8 *variant;
+  /* If this playlist is a variant playlist, select the first one
+   * and update it */
+  if (skippy_m3u8_client_has_variant_playlist (client)) {
+    // Select child playlist
+    if (connection_speed == 0) {
+      variant = skippy_m3u8_client_get_current_variant (client);
+    } else {
+      variant = skippy_m3u8_client_get_playlist_for_bitrate (client, connection_speed);
+    }
+    // Set the variant as current playlist to be used
+    skippy_m3u8_client_set_current (client, variant);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+void skippy_m3u8_client_seek (SkippyM3U8Client * client, GstClockTime target_pos)
+{
+  gint current_sequence;
+  GList *walk;
+  SkippyM3U8MediaFile *file;
+  GstClockTime current_pos;
+
+  /* Walk the stream data model */
+  SKIPPY_M3U8_CLIENT_LOCK (client);
+  file = SKIPPY_M3U8_MEDIA_FILE (client->current->files->data);
+  current_sequence = file->sequence;
+  current_pos = 0;
+  /* FIXME: Here we need proper discont handling */
+  for (walk = client->current->files; walk; walk = walk->next) {
+    file = walk->data;
+
+    current_sequence = file->sequence;
+    if (current_pos <= target_pos
+        && target_pos < current_pos + file->duration) {
+      break;
+    }
+    current_pos += file->duration;
+  }
+
+  // If we seeked over duration just increment the sequence
+  if (walk == NULL) {
+    GST_DEBUG ("Seeking further than track duration");
+    current_sequence++;
+  }
+
+  // Updating data model
+  GST_DEBUG ("Seeking to sequence %d", current_sequence);
+  client->sequence = current_sequence;
+  client->sequence_position = current_pos;
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
+}
+
