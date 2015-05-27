@@ -97,7 +97,7 @@ static void skippy_hls_demux_stream_loop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_stop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_pause (SkippyHLSDemux * demux);
 static SkippyFragment* skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
-static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux);
+static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose);
 static void skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 
@@ -107,6 +107,8 @@ G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 static void
 skippy_hls_demux_dispose (GObject * obj)
 {
+  GST_DEBUG ("Disposing ...");
+
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (obj);
 
   skippy_hls_demux_reset (demux, TRUE);
@@ -125,10 +127,25 @@ skippy_hls_demux_dispose (GObject * obj)
   }
 
   if (demux->queue_sinkpad) {
-    gst_object_unref (demux->queue_sinkpad);
+    g_object_unref (demux->queue_sinkpad);
+    demux->queue_sinkpad = NULL;
   }
 
   G_OBJECT_CLASS (parent_class)->dispose (obj);
+
+  GST_DEBUG ("Done cleaning up.");
+}
+
+static void
+skippy_hls_demux_finalize (GObject * obj)
+{
+  GST_DEBUG ("Finalizing ...");
+
+  SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (obj);
+
+  G_OBJECT_CLASS (parent_class)->finalize (obj);
+
+  GST_DEBUG ("Finalized.");
 }
 
 static void
@@ -143,6 +160,7 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
   gobject_class->set_property = skippy_hls_demux_set_property;
   gobject_class->get_property = skippy_hls_demux_get_property;
   gobject_class->dispose = skippy_hls_demux_dispose;
+  gobject_class->finalize = skippy_hls_demux_finalize;
 
   g_object_class_install_property (gobject_class, PROP_BUFFER_AHEAD_DURATION,
       g_param_spec_uint ("buffer-ahead-duration",
@@ -388,7 +406,8 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
 
   // Post the message on the bus
   gst_element_post_message (GST_ELEMENT_CAST (demux),
-    gst_message_new_element (GST_OBJECT_CAST (demux), structure));
+    gst_message_ref (gst_message_new_element (GST_OBJECT_CAST (demux), structure))
+  );
 }
 
 static gchar*
@@ -502,7 +521,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   // Returns FALSE if we need to load a variant playlist (and selects a variant from main playlist)
   if (!skippy_m3u8_client_init_playlist (demux->client, demux->connection_speed)) {
     // Fetch the playlist
-    if (!skippy_hls_demux_update_playlist (demux)) {
+    if (!skippy_hls_demux_refresh_playlist (demux)) {
       GST_ERROR ("Failed to load variant playlist");
       return;
     }
@@ -892,7 +911,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
         // || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND)
         )) {
       GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
-      skippy_hls_demux_update_playlist (demux);
+      skippy_hls_demux_refresh_playlist (demux);
     }
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
@@ -927,10 +946,15 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
 }
 
+static gboolean
+skippy_hls_demux_is_caching_allowed (SkippyHLSDemux * demux)
+{
+  return demux->client->current ? demux->client->current->allowcache && demux->caching_enabled : demux->caching_enabled;
+}
+
 static SkippyFragment*
 skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn *fetch_ret, GError **err)
 {
-  gboolean allow_cache = demux->caching_enabled;
   SkippyFragment* fragment;
 
   g_return_val_if_fail (*err == NULL, NULL);
@@ -952,7 +976,7 @@ skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloader
     demux->client->main ? demux->client->main->uri : NULL, // Referrer
     FALSE, // Compress (useless with coded media data)
     FALSE, // Refresh disabled (don't wipe out cache)
-    demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache, // Allow caching directive
+    skippy_hls_demux_is_caching_allowed (demux), // Allow caching directive
     err // NOTE: We don't want to handle the error here, we just pass it in and let it be handled by our caller
   );
 
@@ -961,11 +985,10 @@ skippy_hls_demux_push_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloader
 }
 
 static gboolean
-skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
+skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
 {
   SkippyFragment *download;
   GstBuffer *buf = NULL;
-  GstStructure *stat_msg;
   GError* err;
   SkippyUriDownloaderFetchReturn fetch_ret;
   gboolean ret = FALSE;
@@ -978,7 +1001,7 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
     demux->client->main ? demux->client->main->uri : NULL, // Referrer
     TRUE, // Compress (good for playlists)
     TRUE, // Refresh (wipe out cached stuff)
-    demux->client->current ? demux->client->current->allowcache && demux->caching_enabled : demux->caching_enabled, // Allow caching directive
+    skippy_hls_demux_is_caching_allowed (demux), // Allow caching directive
     &err // Error
   );
   // Handle fetch result
