@@ -35,8 +35,6 @@
  * Last reviewed on 2010-10-07
  */
 
-#define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
-
 #include <string.h>
 
 #include <skippyHLS/skippy_hlsdemux.h>
@@ -117,7 +115,6 @@ skippy_hls_demux_dispose (GObject * obj)
 
   if (demux->stream_task) {
     gst_object_unref (demux->stream_task);
-    g_rec_mutex_clear (&demux->stream_lock);
     demux->stream_task = NULL;
   }
 
@@ -142,6 +139,8 @@ skippy_hls_demux_finalize (GObject * obj)
   GST_DEBUG ("Finalizing ...");
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (obj);
+
+  g_rec_mutex_clear (&demux->stream_lock);
 
   G_OBJECT_CLASS (parent_class)->finalize (obj);
 

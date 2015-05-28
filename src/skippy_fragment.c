@@ -118,7 +118,11 @@ skippy_fragment_dispose (GObject * object)
 {
   SkippyFragmentPrivate *priv = SKIPPY_FRAGMENT (object)->priv;
 
+  GST_TRACE_OBJECT (priv, "Disposing ...");
+
   G_OBJECT_CLASS (skippy_fragment_parent_class)->dispose (object);
+
+  GST_TRACE_OBJECT (priv, "Done disposing.");
 }
 
 void

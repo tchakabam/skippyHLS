@@ -26,8 +26,6 @@
 
 #include <glib.h>
 
- #define SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME "skippy-hlsdemux-download"
-
 #define GST_CAT_DEFAULT uridownloader_debug
 GST_DEBUG_CATEGORY (uridownloader_debug);
 
@@ -246,11 +244,12 @@ skippy_uri_downloader_change_state (GstElement * element, GstStateChange transit
   GstStateChangeReturn ret;
   SkippyUriDownloader *demux = SKIPPY_URI_DOWNLOADER (element);
 
-  GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
+  GST_TRACE_OBJECT (demux, "Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
-  GST_DEBUG ("Calling parent class state change handler ...");
+
+  GST_TRACE ("Calling parent class state change handler ...");
   ret = GST_ELEMENT_CLASS (skippy_uri_downloader_parent_class)->change_state (element, transition);
-  GST_DEBUG ("State transition result: %s", gst_element_state_change_return_get_name (ret));
+  GST_TRACE ("State transition result: %s", gst_element_state_change_return_get_name (ret));
 
   return ret;
 }

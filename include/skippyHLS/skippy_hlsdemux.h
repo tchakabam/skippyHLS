@@ -46,6 +46,9 @@ G_BEGIN_DECLS
 typedef struct _SkippyHLSDemux SkippyHLSDemux;
 typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
 
+// Constants for custom element message names
+#define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
+
 /**
  * SkippyHLSDemux:
  *

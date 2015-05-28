@@ -34,6 +34,9 @@ G_BEGIN_DECLS
 #define IS_SKIPPY_SURI_DOWNLOADER(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj),TYPE_SKIPPY_URI_DOWNLOADER))
 #define IS_SKIPPY_URI_DOWNLOADER_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),TYPE_SKIPPY_URI_DOWNLOADER))
 
+// Constants for custom element message names
+#define SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME "skippy-hlsdemux-download"
+
 typedef struct _SkippyUriDownloader SkippyUriDownloader;
 typedef struct _SkippyUriDownloaderPrivate SkippyUriDownloaderPrivate;
 typedef struct _SkippyUriDownloaderClass SkippyUriDownloaderClass;
