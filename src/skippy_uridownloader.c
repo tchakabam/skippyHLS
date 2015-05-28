@@ -313,8 +313,8 @@ skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
     // Make sure we send a 100% callback and have a valid byte number
     if (downloader->priv->bytes_loaded != downloader->priv->bytes_total) {
       downloader->priv->bytes_loaded = downloader->priv->bytes_total;
-      downloader->priv->callback (downloader,
-        downloader->priv->download->start_time, downloader->priv->download->stop_time,
+      skippy_uri_downloader_handle_bytes_received (downloader,
+        downloader->priv->fragment->start_time, downloader->priv->fragment->stop_time,
         downloader->priv->bytes_loaded, downloader->priv->bytes_total
       );
     }
