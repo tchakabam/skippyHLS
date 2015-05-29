@@ -21,7 +21,7 @@
  * Boston, MA 02110-1301, USA.
  */
 
- #include "skippyHLS/skippy_m3u8.h"
+#include "skippyHLS/skippy_m3u8.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -31,6 +31,9 @@
 
 GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define GST_CAT_DEFAULT skippy_m3u8_debug
+
+#define SKIPPY_M3U8_CLIENT_LOCK(c) g_mutex_lock (&c->lock);
+#define SKIPPY_M3U8_CLIENT_UNLOCK(c) g_mutex_unlock (&c->lock);
 
 static GOnce init_once = G_ONCE_INIT;
 
@@ -771,7 +774,7 @@ skippy_m3u8_client_get_uri (SkippyM3U8Client * client)
   g_return_val_if_fail (client != NULL, NULL);
 
   SKIPPY_M3U8_CLIENT_LOCK (client);
-  uri = client->main->uri;
+  uri = client->main ? client->main->uri : NULL;
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return uri;
 }
@@ -784,9 +787,21 @@ skippy_m3u8_client_get_current_uri (SkippyM3U8Client * client)
   g_return_val_if_fail (client != NULL, NULL);
 
   SKIPPY_M3U8_CLIENT_LOCK (client);
-  uri = client->current->uri;
+  uri = client->current ? client->current->uri : NULL;
   SKIPPY_M3U8_CLIENT_UNLOCK (client);
   return uri;
+}
+
+gboolean skippy_m3u8_client_is_caching_allowed (SkippyM3U8Client * client)
+{
+  gboolean allowed;
+
+  g_return_val_if_fail (client != NULL, FALSE);
+
+  SKIPPY_M3U8_CLIENT_LOCK (client);
+  allowed = client->current ? client->current->allowcache : TRUE;
+  SKIPPY_M3U8_CLIENT_UNLOCK (client);
+  return allowed;
 }
 
 gboolean

@@ -36,9 +36,6 @@ typedef struct _SkippyM3U8Client SkippyM3U8Client;
 #define SKIPPY_M3U8(m) ((SkippyM3U8*)m)
 #define SKIPPY_M3U8_MEDIA_FILE(f) ((SkippyM3U8MediaFile*)f)
 
-#define SKIPPY_M3U8_CLIENT_LOCK(c) g_mutex_lock (&c->lock);
-#define SKIPPY_M3U8_CLIENT_UNLOCK(c) g_mutex_unlock (&c->lock);
-
 struct _SkippyM3U8
 {
   gchar *uri;
@@ -103,6 +100,7 @@ const gchar *skippy_m3u8_client_get_uri(SkippyM3U8Client * client);
 const gchar *skippy_m3u8_client_get_current_uri(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client);
+gboolean skippy_m3u8_client_is_caching_allowed (SkippyM3U8Client * client);
 SkippyM3U8 * skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client,
     guint bitrate);
 SkippyM3U8 * skippy_m3u8_client_get_current_variant (SkippyM3U8Client * client);

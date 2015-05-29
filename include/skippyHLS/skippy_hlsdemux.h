@@ -81,15 +81,14 @@ struct _SkippyHLSDemux
   GRecMutex stream_lock;
 
   /* Internal state */
-  GstClockTime duration; // cache for the duration computation of the M3U8 client
-  gboolean have_group_id;
-  guint group_id;
-  guint64 next_update;
+  GstClockTime duration;
+  GstClockTime position;
   gint download_failed_count;
   gboolean seeked;
 
-  /* Current download rate (bps) */
-  gint current_download_rate;
+  // Group ID
+  gboolean have_group_id;
+  guint group_id;
 };
 
 struct _SkippyHLSDemuxClass
