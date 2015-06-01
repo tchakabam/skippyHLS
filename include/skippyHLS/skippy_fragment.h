@@ -56,8 +56,6 @@ struct _SkippyFragment
   gboolean index;                /* Index of the fragment */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
   gsize size;
-
-  SkippyFragmentPrivate *priv;
 };
 
 struct _SkippyFragmentClass

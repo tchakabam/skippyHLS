@@ -37,11 +37,6 @@
 GST_DEBUG_CATEGORY_STATIC (skippy_fragment_debug);
 #define GST_CAT_DEFAULT skippy_fragment_debug
 
-struct _SkippyFragmentPrivate
-{
-  GMutex lock;
-};
-
 G_DEFINE_TYPE (SkippyFragment, skippy_fragment, G_TYPE_OBJECT);
 
 static void skippy_fragment_dispose (GObject * object);
@@ -52,10 +47,7 @@ skippy_fragment_class_init (SkippyFragmentClass * klass)
 {
   GObjectClass *gobject_class = G_OBJECT_CLASS (klass);
 
-  g_type_class_add_private (klass, sizeof (SkippyFragmentPrivate));
-
   gobject_class->dispose = skippy_fragment_dispose;
-  gobject_class->finalize = skippy_fragment_finalize;
 
   GST_DEBUG_CATEGORY_INIT (skippy_fragment_debug, "skippyhls-fragment", 0,
       "HLS fragment");
@@ -65,10 +57,6 @@ static void
 skippy_fragment_init (SkippyFragment * fragment)
 {
   SkippyFragmentPrivate *priv;
-
-  fragment->priv = priv = SKIPPY_FRAGMENT_GET_PRIVATE (fragment);
-
-  g_mutex_init (&fragment->priv->lock);
 
   fragment->download_start_time = gst_util_get_timestamp ();
   fragment->start_time = 0;
@@ -95,10 +83,10 @@ skippy_fragment_new (const gchar* uri)
   return fragment;
 }
 
-static void
-skippy_fragment_finalize (GObject * gobject)
+void
+skippy_fragment_dispose (GObject * object)
 {
-  SkippyFragment *fragment = SKIPPY_FRAGMENT (gobject);
+  SkippyFragment *fragment = SKIPPY_FRAGMENT (object);
 
   if (fragment->uri) {
     g_free (fragment->uri);
@@ -108,21 +96,9 @@ skippy_fragment_finalize (GObject * gobject)
     g_free (fragment->key_uri);
   }
 
-  g_mutex_clear (&fragment->priv->lock);
-
-  G_OBJECT_CLASS (skippy_fragment_parent_class)->finalize (gobject);
-}
-
-void
-skippy_fragment_dispose (GObject * object)
-{
-  SkippyFragmentPrivate *priv = SKIPPY_FRAGMENT (object)->priv;
-
-  GST_TRACE_OBJECT (priv, "Disposing ...");
-
   G_OBJECT_CLASS (skippy_fragment_parent_class)->dispose (object);
 
-  GST_TRACE_OBJECT (priv, "Done disposing.");
+  GST_TRACE ("Done disposing.");
 }
 
 void
@@ -130,9 +106,7 @@ skippy_fragment_set_completed (SkippyFragment * fragment)
 {
   g_return_if_fail (fragment != NULL);
 
-  g_mutex_lock (&fragment->priv->lock);
   GST_LOG ("Fragment set completed");
   fragment->completed = TRUE;
   fragment->download_stop_time = gst_util_get_timestamp ();
-  g_mutex_unlock (&fragment->priv->lock);
 }
