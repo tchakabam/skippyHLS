@@ -44,9 +44,10 @@ struct _SkippyUriDownloaderPrivate
   GstPad *srcpad;
   GstBuffer *buffer;
   GstSegment segment;
-
   GError *err;
+
   GCond cond;
+  GMutex download_lock;
 
   gboolean set_uri;
   gboolean fetching;
@@ -156,6 +157,7 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
 
   // Init wait cond for blocking fetch call
   g_cond_init (&downloader->priv->cond);
+  g_mutex_init (&downloader->priv->download_lock);
 
   // Reset segment completely
   gst_segment_init (&downloader->priv->segment, GST_FORMAT_TIME);
@@ -238,6 +240,7 @@ skippy_uri_downloader_finalize (GObject * object)
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (object);
 
   g_cond_clear (&downloader->priv->cond);
+  g_mutex_clear (&downloader->priv->download_lock);
 
   G_OBJECT_CLASS (skippy_uri_downloader_parent_class)->finalize (object);
 }
@@ -262,7 +265,6 @@ SkippyUriDownloader *
 skippy_uri_downloader_new ()
 {
   SkippyUriDownloader* downloader = g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, NULL);
-
   return downloader;
 }
 
@@ -684,17 +686,20 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
   g_return_val_if_fail (*err == NULL, SKIPPY_URI_DOWNLOADER_FAILED);
 
+  g_mutex_lock (&downloader->priv->download_lock);
+
   skippy_uri_downloader_reset (downloader);
 
   // Make sure we have our data source component set up and wired
   if (!skippy_uri_downloader_create_src (downloader, fragment->uri)) {
+    g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_FAILED;
   }
 
   // Set URL
   if (!skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)) {
     GST_WARNING_OBJECT (downloader, "Failed to set URI");
-    GST_OBJECT_UNLOCK (downloader);
+    g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -713,6 +718,7 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   if (ret == GST_STATE_CHANGE_FAILURE || downloader->priv->fragment == NULL) {
     GST_WARNING_OBJECT (downloader, "Failed to set src to READY");
     GST_OBJECT_UNLOCK (downloader);
+    g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -720,6 +726,7 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   if (!skippy_uri_downloader_set_range (downloader, fragment->range_start, fragment->range_end)) {
     GST_WARNING_OBJECT (downloader, "Failed to set range");
     GST_OBJECT_UNLOCK (downloader);
+    g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -732,6 +739,7 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   GST_OBJECT_LOCK (downloader);
   if (ret == GST_STATE_CHANGE_FAILURE) {
     GST_OBJECT_UNLOCK (downloader);
+    g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
@@ -758,15 +766,18 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   if (downloader->priv->err) {
     fragment->completed = FALSE;
     GST_OBJECT_UNLOCK (downloader);
+    g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
   if (fragment->cancelled) {
     GST_OBJECT_UNLOCK (downloader);
+    g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_CANCELLED;
   }
 
   GST_OBJECT_UNLOCK (downloader);
+  g_mutex_unlock (&downloader->priv->download_lock);
   return SKIPPY_URI_DOWNLOADER_COMPLETED;
 }
 
