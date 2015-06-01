@@ -671,11 +671,9 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
     return FALSE;
   switch (query->type) {
     case GST_QUERY_DURATION:
-      GST_OBJECT_LOCK (demux);
       gst_query_parse_duration (query, &fmt, NULL);
       if (fmt != GST_FORMAT_TIME) {
         GST_WARNING ("Can't process duration query that is not in time format");
-        GST_OBJECT_UNLOCK (demux);
         break;
       }
       if (GST_CLOCK_TIME_IS_VALID (demux->duration) && demux->duration > 0) {
@@ -685,22 +683,17 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       } else {
         GST_WARNING ("Bad duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (demux->duration));
       }
-      GST_OBJECT_UNLOCK (demux);
       break;
     case GST_QUERY_URI:
-      GST_OBJECT_LOCK (demux);
       if (demux->client) {
         gst_query_set_uri (query, skippy_m3u8_client_get_uri (demux->client));
         ret = TRUE;
       }
-      GST_OBJECT_UNLOCK (demux);
       break;
     case GST_QUERY_SEEKING:
-      GST_OBJECT_LOCK (demux);
       gst_query_parse_seeking (query, &fmt, NULL, NULL, NULL);
       if (fmt != GST_FORMAT_TIME) {
         GST_DEBUG ("Can't process seeking query that is not in time format");
-        GST_OBJECT_UNLOCK (demux);
         break;
       }
       if (GST_CLOCK_TIME_IS_VALID (demux->duration) && demux->duration > 0) {
@@ -711,7 +704,6 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       } else {
         GST_DEBUG ("Can't process seeking query that is not in time format");
       }
-      GST_OBJECT_UNLOCK (demux);
       break;
     default:
       /* Don't fordward queries upstream because of the special nature of this
@@ -935,7 +927,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // When failed
     GST_INFO ("Fragment fetch error: %s", err->message);
     // Actual download failure
-    GST_OBJECT_LOCK (demux);
     demux->download_failed_count++;
     GST_DEBUG ("Failed to fetch fragment for %d times.", demux->download_failed_count);
     // We only want to refetch the playlist if we get a 403 or a 404
@@ -946,7 +937,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
       skippy_hls_demux_refresh_playlist (demux);
     }
-    GST_OBJECT_UNLOCK (demux);
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
     g_return_if_fail (!err);
