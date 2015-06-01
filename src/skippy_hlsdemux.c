@@ -948,10 +948,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       fragment->download_stop_time - fragment->download_start_time,
       fragment->size);
     // Reset failure counter
-    GST_OBJECT_LOCK (demux);
     demux->position = fragment->start_time;
     demux->download_failed_count = 0;
-    GST_OBJECT_UNLOCK (demux);
     // Go to next fragment
     skippy_m3u8_client_advance_fragment (demux->client);
     break;

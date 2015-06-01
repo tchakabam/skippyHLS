@@ -688,6 +688,8 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
 
   g_mutex_lock (&downloader->priv->download_lock);
 
+  skippy_uri_downloader_unset_uri (downloader);
+
   skippy_uri_downloader_reset (downloader);
 
   // Make sure we have our data source component set up and wired
@@ -758,10 +760,6 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
     GST_DEBUG ("Condition has been signalled");
   }
   downloader->priv->fetching = FALSE;
-
-  GST_OBJECT_UNLOCK (downloader);
-  skippy_uri_downloader_unset_uri (downloader);
-  GST_OBJECT_LOCK (downloader);
 
   if (downloader->priv->err) {
     fragment->completed = FALSE;
