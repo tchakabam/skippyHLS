@@ -457,15 +457,12 @@ skippy_hls_demux_update_duration (SkippyHLSDemux * demux)
 {
   // Post duration message if non-live
   if (!skippy_m3u8_client_is_live (demux->client)) {
-    GST_OBJECT_LOCK (demux);
     demux->duration = skippy_m3u8_client_get_duration (demux->client);
     GST_DEBUG_OBJECT (demux, "Playlist duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (demux->duration));
     if (demux->duration == GST_CLOCK_TIME_NONE) {
       GST_ERROR ("Duration has invalid value, not posting message to pipeline");
-      GST_OBJECT_UNLOCK (demux);
       return;
     }
-    GST_OBJECT_UNLOCK (demux);
     gst_element_post_message (GST_ELEMENT (demux), gst_message_new_duration_changed (GST_OBJECT (demux)));
   }
 }
@@ -496,9 +493,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   GST_INFO_OBJECT (demux, "M3U8 location: %s", uri);
 
   // Create M3U8 client with main playlist URI
-  GST_OBJECT_LOCK (demux);
   demux->client = skippy_m3u8_client_new (uri);
-  GST_OBJECT_UNLOCK (demux);
 
   // Parse main playlist
   if (!skippy_m3u8_client_load_playlist (demux->client, demux->playlist)) {
@@ -509,7 +504,6 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
   // Sets up the initial playlist (for when using a variant / sub-playlist)
   // Returns FALSE if we need to load a variant playlist (and selects a variant from main playlist)
-  GST_OBJECT_LOCK (demux);
   if (!skippy_m3u8_client_init_playlist (demux->client, demux->connection_speed)) {
     // Fetch the playlist
     if (!skippy_hls_demux_refresh_playlist (demux)) {
@@ -517,7 +511,6 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
       return;
     }
   }
-  GST_OBJECT_UNLOCK (demux);
 
   // Updates duration field and posts message to bus
   skippy_hls_demux_update_duration (demux);
@@ -632,9 +625,7 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   skippy_uri_downloader_set_segment (demux->downloader, segment);
 
   // Set seeked flag
-  GST_OBJECT_LOCK (demux);
   demux->seeked = TRUE;
-  GST_OBJECT_UNLOCK (demux);
 
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
