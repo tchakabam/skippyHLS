@@ -643,18 +643,15 @@ static void
 skippy_uri_downloader_unset_uri (SkippyUriDownloader * downloader)
 {
   // Flush bus
-  GST_OBJECT_LOCK (downloader);
   gst_bus_set_flushing (downloader->priv->bus, TRUE);
   gst_bus_set_flushing (downloader->priv->bus, FALSE);
   downloader->priv->set_uri = FALSE;
   if (downloader->priv->err) {
-    GST_OBJECT_UNLOCK (downloader);
     /* set the element state to NULL if there was an error otherwise go back to READY state */
     GST_DEBUG ("Setting source element to NULL state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_NULL);
     return;
   }
-  GST_OBJECT_UNLOCK (downloader);
   GST_DEBUG ("Setting source element to READY state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
   gst_element_set_state (downloader->priv->urisrc, GST_STATE_READY);
 }
@@ -687,8 +684,6 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   g_return_val_if_fail (*err == NULL, SKIPPY_URI_DOWNLOADER_FAILED);
 
   g_mutex_lock (&downloader->priv->download_lock);
-
-  skippy_uri_downloader_unset_uri (downloader);
 
   skippy_uri_downloader_reset (downloader);
 
@@ -756,10 +751,15 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
   downloader->priv->fetching = TRUE;
   while (!fragment->cancelled && !fragment->completed && !downloader->priv->err) {
     // Unlocks our mutex
+
     g_cond_wait (&downloader->priv->cond, GST_OBJECT_GET_LOCK (downloader));
     GST_DEBUG ("Condition has been signalled");
   }
   downloader->priv->fetching = FALSE;
+
+  GST_OBJECT_UNLOCK (downloader);
+  skippy_uri_downloader_unset_uri (downloader);
+  GST_OBJECT_LOCK (downloader);
 
   if (downloader->priv->err) {
     fragment->completed = FALSE;
