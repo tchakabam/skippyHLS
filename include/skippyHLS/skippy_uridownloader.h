@@ -70,5 +70,6 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
 void skippy_uri_downloader_reset (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_cancel (SkippyUriDownloader *downloader);
 void skippy_uri_downloader_free (SkippyUriDownloader *downloader);
+GstElement* skippy_uri_downloader_get_parent (SkippyUriDownloader *downloader);
 
 G_END_DECLS

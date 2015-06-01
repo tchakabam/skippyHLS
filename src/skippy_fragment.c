@@ -224,6 +224,7 @@ skippy_fragment_add_buffer (SkippyFragment * fragment, GstBuffer * buffer)
   }
 
   GST_DEBUG ("Adding new buffer to the fragment");
+
   /* We steal the buffers you pass in */
   if (fragment->priv->buffer == NULL)
     fragment->priv->buffer = buffer;
