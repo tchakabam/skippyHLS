@@ -68,7 +68,7 @@ struct _SkippyHLSDemux
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;
   SkippyUriDownloader *playlist_downloader;
-  SkippyM3U8Client *client; /* M3U8 client */
+  SkippyM3U8Client *client;     /* M3U8 client */
 
   /* Properties */
   guint buffer_ahead_duration_secs;
