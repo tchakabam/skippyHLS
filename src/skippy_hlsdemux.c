@@ -52,6 +52,9 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 #define GST_CAT_DEFAULT skippy_hls_demux_debug
 
+#define LOCK(demux) g_rec_mutex_lock(&demux->stream_lock)
+#define UNLOCK(demux) g_rec_mutex_unlock(&demux->stream_lock)
+
 enum
 {
   PROP_0,
@@ -234,20 +237,23 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->buffer_ahead_duration_secs = DEFAULT_BUFFER_AHEAD_DURATION;
   demux->caching_enabled = DEFAULT_CACHING_ENABLED;
 
-  // Internal state
-  skippy_hls_demux_reset (demux, FALSE);
-
-  // Thread
+  // Init lock
   g_rec_mutex_init (&demux->stream_lock);
+  // Init thread
   demux->stream_task =
       gst_task_new ((GstTaskFunction) skippy_hls_demux_stream_loop, demux, NULL);
   gst_task_set_lock (demux->stream_task, &demux->stream_lock);
+
+  // Internal state
+  skippy_hls_demux_reset (demux, FALSE);
 }
 
 static void
 skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
 {
   GST_DEBUG ("Re-setting element: (dispose=%d)", (int) dispose);
+
+  LOCK (demux);
 
   demux->duration = GST_CLOCK_TIME_NONE;
   demux->download_failed_count = 0;
@@ -283,6 +289,8 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose)
       "use-buffering", FALSE,
       NULL);
   }
+
+  UNLOCK (demux);
 }
 
 static void
@@ -455,11 +463,10 @@ skippy_hls_demux_query_position (SkippyHLSDemux * demux)
 static void
 skippy_hls_demux_update_duration (SkippyHLSDemux * demux)
 {
+  LOCK (demux);
   // Post duration message if non-live
   if (!skippy_m3u8_client_is_live (demux->client)) {
-    GST_OBJECT_LOCK (demux);
     demux->duration = skippy_m3u8_client_get_duration (demux->client);
-    GST_OBJECT_UNLOCK (demux);
     GST_DEBUG_OBJECT (demux, "Playlist duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (demux->duration));
     if (demux->duration == GST_CLOCK_TIME_NONE) {
       GST_ERROR ("Duration has invalid value, not posting message to pipeline");
@@ -467,12 +474,16 @@ skippy_hls_demux_update_duration (SkippyHLSDemux * demux)
     }
     gst_element_post_message (GST_ELEMENT (demux), gst_message_new_duration_changed (GST_OBJECT (demux)));
   }
+  UNLOCK (demux);
 }
 
 static void
 skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 {
   gchar* uri;
+  guint connection_speed;
+
+  LOCK (demux);
 
   // No playlist - can't do anything
   if (demux->playlist == NULL) {
@@ -495,9 +506,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   GST_INFO_OBJECT (demux, "M3U8 location: %s", uri);
 
   // Create M3U8 client with main playlist URI
-  GST_OBJECT_LOCK (demux);
   demux->client = skippy_m3u8_client_new (uri);
-  GST_OBJECT_UNLOCK (demux);
 
   // Parse main playlist
   if (!skippy_m3u8_client_load_playlist (demux->client, demux->playlist)) {
@@ -508,7 +517,8 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
   // Sets up the initial playlist (for when using a variant / sub-playlist)
   // Returns FALSE if we need to load a variant playlist (and selects a variant from main playlist)
-  if (!skippy_m3u8_client_init_playlist (demux->client, demux->connection_speed)) {
+  g_object_get (demux, "connection-speed", &connection_speed, NULL);
+  if (!skippy_m3u8_client_init_playlist (demux->client, connection_speed)) {
     // Fetch the playlist
     if (!skippy_hls_demux_refresh_playlist (demux)) {
       GST_ERROR ("Failed to load variant playlist");
@@ -537,25 +547,28 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   gst_task_start (demux->stream_task);
 
   g_free (uri);
+
+  UNLOCK (demux);
   return;
 }
 
 static gboolean
 skippy_hls_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
-  SkippyHLSDemux *demux;
-
-  demux = SKIPPY_HLS_DEMUX (parent);
-
   GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
 
+  SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (parent);
+
+  if (gst_task_get_state (demux->stream_task) != GST_TASK_STOPPED) {
+    GST_WARNING ("Event on sink pad while stream loop running: %" GST_PTR_FORMAT, event);
+    gst_event_unref (event);
+    return FALSE;
+  }
+
+  LOCK (demux);
   switch (event->type) {
     case GST_EVENT_EOS:
-      if (gst_task_get_state (demux->stream_task) == GST_TASK_STOPPED) {
-        skippy_hls_demux_handle_first_playlist (demux);
-      } else {
-        GST_WARNING ("EOS on sink pad while stream loop running");
-      }
+      skippy_hls_demux_handle_first_playlist (demux);
       gst_event_unref (event); // we don't want to forward the EOS
       return TRUE;
     case GST_EVENT_SEGMENT:
@@ -565,7 +578,7 @@ skippy_hls_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
     default:
       break;
   }
-
+  UNLOCK (demux);
   return gst_pad_event_default (pad, parent, event);
 }
 
@@ -595,6 +608,8 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   GstSeekType start_type, stop_type;
   gint64 start, stop;
   GstSegment segment;
+
+  LOCK (demux);
 
   GST_INFO ("Received GST_EVENT_SEEK");
 
@@ -629,9 +644,7 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   skippy_uri_downloader_set_segment (demux->downloader, segment);
 
   // Set seeked flag
-  GST_OBJECT_LOCK (demux);
   demux->seeked = TRUE;
-  GST_OBJECT_UNLOCK (demux);
 
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
@@ -651,6 +664,8 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   // Handle and swallow event
   gst_event_unref (event);
+
+  UNLOCK (demux);
   return TRUE;
 }
 
@@ -716,11 +731,19 @@ skippy_hls_demux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 {
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (parent);
 
+  if (gst_task_get_state (demux->stream_task) != GST_TASK_STOPPED) {
+    GST_WARNING ("Buffer on sink pad while stream loop running!");
+    gst_buffer_unref (buf);
+    return GST_FLOW_ERROR;
+  }
+
+  LOCK (demux);
   if (demux->playlist == NULL) {
     demux->playlist = buf;
   } else {
     demux->playlist = gst_buffer_append (demux->playlist, buf);
   }
+  UNLOCK (demux);
   return GST_FLOW_OK;
 }
 
@@ -826,31 +849,39 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
 static gboolean
 skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
 {
+  guint buffered_ahead_secs;
   GstClockTime pos, buffered_ahead;
 
+  LOCK (demux);
   // Check upfront position relative to stream position
   if (demux->srcpad) {
-    GST_DEBUG ("Buffer ahead duration is %d seconds", (int) demux->buffer_ahead_duration_secs);
     // Get current playback position from downstream
     pos = (GstClockTime) skippy_hls_demux_query_position (demux);
-    buffered_ahead = (GstClockTime) (demux->buffer_ahead_duration_secs * GST_SECOND);
+    // Get buffer-ahead property
+    g_object_get (demux, "buffer-ahead-duration", &buffered_ahead_secs, NULL);
+    GST_DEBUG ("Buffer ahead duration is %d seconds", (int) buffered_ahead_secs);
+    // Convert to nanoseconds
+    buffered_ahead = (GstClockTime) (buffered_ahead_secs * GST_SECOND);
     if (!demux->seeked && demux->position >= pos + buffered_ahead) {
       GST_LOG ("Blocking task as we have buffered enough until now (up to %.2f seconds of media position)",
         ((float) demux->position) / GST_SECOND);
       g_usleep (POLL_PERIOD);
+      UNLOCK (demux);
       return FALSE;
     }
   }
+  UNLOCK (demux);
   return TRUE;
 }
 
 static gboolean
 skippy_hls_demux_is_caching_allowed (SkippyHLSDemux * demux)
 {
-  gboolean ret;
-  GST_OBJECT_LOCK (demux);
-  ret = skippy_m3u8_client_is_caching_allowed (demux->client) && demux->caching_enabled;
-  GST_OBJECT_UNLOCK (demux);
+  gboolean ret, caching_enabled;
+  LOCK (demux);
+  g_object_get (demux, "caching-enabled", &caching_enabled, NULL);
+  ret = skippy_m3u8_client_is_caching_allowed (demux->client) && caching_enabled;
+  UNLOCK (demux);
   return ret;
 }
 
@@ -862,6 +893,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GError *err = NULL;
   GstState current_state, pending_state;
   guint queue_level;
+
+  LOCK (demux);
 
   GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");
 
@@ -877,6 +910,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
   // Check current playback position against buffer levels
   if (!skippy_hls_check_buffer_ahead (demux)) {
+    UNLOCK (demux);
     return;
   }
   GST_DEBUG ("Will fetch next fragment ...");
@@ -926,9 +960,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // When failed
     GST_INFO ("Fragment fetch error: %s", err->message);
     // Actual download failure
-    GST_OBJECT_LOCK (demux);
     demux->download_failed_count++;
-    GST_OBJECT_UNLOCK (demux);
     GST_DEBUG ("Failed to fetch fragment for %d times.", demux->download_failed_count);
     // We only want to refetch the playlist if we get a 403 or a 404
     if ((g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)
@@ -949,10 +981,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       fragment->download_stop_time - fragment->download_start_time,
       fragment->size);
     // Reset failure counter
-    GST_OBJECT_LOCK (demux);
     demux->position = fragment->start_time;
     demux->download_failed_count = 0;
-    GST_OBJECT_UNLOCK (demux);
     // Go to next fragment
     skippy_m3u8_client_advance_fragment (demux->client);
     break;
@@ -966,6 +996,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   }
   g_clear_error (&err);
 
+  UNLOCK (demux);
 }
 
 static gboolean
@@ -976,6 +1007,8 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   GError* err = NULL;
   SkippyUriDownloaderFetchReturn fetch_ret;
   gboolean ret = FALSE;
+
+  LOCK (demux);
 
   // Create a download
   download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client));
@@ -1017,6 +1050,8 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (buf) {
     gst_buffer_unref (buf);
   }
+
+  UNLOCK (demux);
   return ret;
 }
 

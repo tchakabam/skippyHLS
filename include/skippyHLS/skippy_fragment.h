@@ -33,14 +33,10 @@ G_BEGIN_DECLS
 #define SKIPPY_IS_FRAGMENT_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),TYPE_SKIPPY_FRAGMENT))
 
 typedef struct _SkippyFragment SkippyFragment;
-typedef struct _SkippyFragmentPrivate SkippyFragmentPrivate;
 typedef struct _SkippyFragmentClass SkippyFragmentClass;
-
-struct SkippyUriDownloader;
 
 struct _SkippyFragment
 {
-  GObject parent;
 
   gchar* uri;                    /* URI of the fragment */
   gchar *key_uri;                /* Encryption key */
@@ -56,8 +52,6 @@ struct _SkippyFragment
   gboolean index;                /* Index of the fragment */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
   gsize size;
-
-  SkippyFragmentPrivate *priv;
 };
 
 struct _SkippyFragmentClass
