@@ -345,6 +345,10 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   GST_TRACE ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
 
+  GST_TRACE ("Calling parent class state change handler ...");
+  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+  GST_TRACE ("State transition result: %s", gst_element_state_change_return_get_name (ret));
+
   switch (transition) {
     // Bring the element back into initial state
     case GST_STATE_CHANGE_PAUSED_TO_READY:
@@ -353,10 +357,6 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
     default:
       break;
   }
-
-  GST_TRACE ("Calling parent class state change handler ...");
-  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
-  GST_TRACE ("State transition result: %s", gst_element_state_change_return_get_name (ret));
 
   return ret;
 }
