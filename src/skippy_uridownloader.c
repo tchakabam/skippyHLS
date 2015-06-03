@@ -170,8 +170,6 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
   // Cancel anything ongoing just in case
   skippy_uri_downloader_cancel (downloader);
 
-  GST_TRACE ("Reset invoked");
-
   downloader->priv->bytes_loaded = 0;
   downloader->priv->bytes_total = 0;
   downloader->priv->fetching = FALSE;
@@ -193,7 +191,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
     downloader->priv->buffer = NULL;
   }
 
-  GST_TRACE ("Done.");
+  GST_TRACE ("Reset done");
 }
 
 static void
@@ -672,12 +670,10 @@ skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFr
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
 
-  GST_OBJECT_LOCK (downloader);
   // Storing the current fragment info
   downloader->priv->fragment = g_object_ref (fragment);
   GST_DEBUG ("Preparing data source ...");
   // Bootup source into READY state
-  GST_OBJECT_UNLOCK (downloader);
 
   ret = gst_element_set_state (downloader->priv->urisrc, GST_STATE_READY);
   GST_DEBUG ("State change return: %s", gst_element_state_change_return_get_name (ret));
