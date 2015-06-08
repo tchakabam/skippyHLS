@@ -9,6 +9,8 @@
 GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define GST_CAT_DEFAULT skippy_m3u8_debug
 
+#define NANOSECONDS_TO_GST_TIME(t) ((GstClockTime)t*GST_NSECOND)
+
 using namespace std;
 
 struct SkippyM3U8ClientPrivate
@@ -108,9 +110,9 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   item = client->priv->playlist[client->priv->current_index];
 
   fragment = skippy_fragment_new (item.url.c_str(), NULL, NULL);
-  fragment->start_time = item.start;
-  fragment->stop_time = item.end;
-  fragment->duration = item.duration;
+  fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
+  fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
+  fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
   fragment->discontinuous = TRUE;
   return fragment;
 }
@@ -172,13 +174,13 @@ void skippy_m3u8_client_set_current_playlist (SkippyM3U8Client * client, const g
 GstClockTime skippy_m3u8_client_get_total_duration (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return (GstClockTime) client->priv->playlist.totalDuration;
+  return NANOSECONDS_TO_GST_TIME (client->priv->playlist.totalDuration);
 }
 
 GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return (GstClockTime) client->priv->playlist.targetDuration;
+  return NANOSECONDS_TO_GST_TIME (client->priv->playlist.targetDuration);
 }
 
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client)
