@@ -199,6 +199,8 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
 
   GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhlsdemux", 0,
       "Skippy HLS client");
+
+  skippy_m3u8_client_init ();
 }
 
 // TODO: send a message here on the bus instead
@@ -407,8 +409,7 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
     return FALSE;
   }
   // Parse seek event
-  gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start,
-      &stop_type, &stop);
+  gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start, &stop_type, &stop);
   if (format != GST_FORMAT_TIME) {
     GST_WARNING ("Received seek event not in time format");
     gst_event_unref (event);
@@ -418,6 +419,9 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   GST_DEBUG_OBJECT (demux, "seek event, rate: %f start: %" GST_TIME_FORMAT
       " stop: %" GST_TIME_FORMAT, rate, GST_TIME_ARGS (start),
       GST_TIME_ARGS (stop));
+
+  // Set target position
+  target_pos = (GstClockTime) start;
 
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {

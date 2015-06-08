@@ -40,6 +40,8 @@ struct _SkippyM3U8Client
   struct SkippyM3U8ClientPrivate* priv;
 };
 
+void skippy_m3u8_client_init ();
+
 SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri);
 void skippy_m3u8_client_free (SkippyM3U8Client * client);
 

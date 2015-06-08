@@ -6,6 +6,9 @@
 
 #include <skippyHLS/SkippyM3UParser.hpp>
 
+GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
+#define GST_CAT_DEFAULT skippy_m3u8_debug
+
 using namespace std;
 
 struct SkippyM3U8ClientPrivate
@@ -26,6 +29,11 @@ struct SkippyM3U8ClientPrivate
   SkippyM3UPlaylist playlist;
   recursive_mutex mutex;
 };
+
+void skippy_m3u8_client_init ()
+{
+  GST_DEBUG_CATEGORY_INIT (skippy_m3u8_debug, "skippyhls-m3u8", 0, "M3U8 client");
+}
 
 SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri)
 {
@@ -103,6 +111,7 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   fragment->start_time = item.start;
   fragment->stop_time = item.end;
   fragment->duration = item.duration;
+  fragment->discontinuous = TRUE;
   return fragment;
 }
 
@@ -120,10 +129,15 @@ gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime tar
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
   SkippyM3UItem item;
+  unsigned long target_pos = (unsigned long) GST_TIME_AS_NSECONDS(target);
+
+  GST_LOG ("Seek to target: %ld ns", target_pos);
+
   for (int i=0;i<client->priv->playlist.size();i++) {
     item = client->priv->playlist.at(i);
-    if (target >= item.start && target < item.end)
+    if (target_pos >= item.start && target_pos < item.end)
     {
+      GST_LOG ("Seeked to index %d, interval %ld - %ld", i, (long) item.start, (long) item.end);
       client->priv->current_index = i;
       return TRUE;
     }

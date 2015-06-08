@@ -60,8 +60,7 @@ skippy_fragment_class_init (SkippyFragmentClass * klass)
   gobject_class->dispose = skippy_fragment_dispose;
   gobject_class->finalize = skippy_fragment_finalize;
 
-  GST_DEBUG_CATEGORY_INIT (skippy_fragment_debug, "skippyhls-fragment", 0,
-      "HLS fragment");
+  GST_DEBUG_CATEGORY_INIT (skippy_fragment_debug, "skippyhls-fragment", 0, "HLS fragment");
 }
 
 static void
