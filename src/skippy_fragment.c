@@ -78,7 +78,6 @@ skippy_fragment_init (SkippyFragment * fragment)
   fragment->start_time = 0;
   fragment->stop_time = 0;
   fragment->duration = 0;
-  fragment->index = 0;
   fragment->range_start = 0;
   fragment->range_end = -1;
   fragment->completed = FALSE;
