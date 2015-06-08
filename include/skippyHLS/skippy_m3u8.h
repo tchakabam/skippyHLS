@@ -26,20 +26,13 @@
 
 #include "skippy_fragment.h"
 
-G_BEGIN_DECLS
-
-typedef struct _SkippyM3U8Client SkippyM3U8Client;
-
 struct SkippyM3U8ClientPrivate;
-
-#define SKIPPY_M3U8_CLIENT_LOCK(c) g_mutex_lock (&c->lock);
-#define SKIPPY_M3U8_CLIENT_UNLOCK(c) g_mutex_unlock (&c->lock);
-
-struct _SkippyM3U8Client
+typedef struct _SkippyM3U8Client
 {
   struct SkippyM3U8ClientPrivate* priv;
-};
+} SkippyM3U8Client;
 
+// Initialize global debug log category (call only once)
 void skippy_m3u8_client_init ();
 
 SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri);
@@ -65,5 +58,3 @@ GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client);
-
-G_END_DECLS
