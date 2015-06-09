@@ -26,6 +26,9 @@
 
 #include "skippy_fragment.h"
 
+// Add extern "C" when using C++ compiler
+G_BEGIN_DECLS
+
 struct SkippyM3U8ClientPrivate;
 typedef struct _SkippyM3U8Client
 {
@@ -58,3 +61,5 @@ GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client);
+
+G_END_DECLS
