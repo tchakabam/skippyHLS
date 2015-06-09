@@ -1,5 +1,6 @@
 #include <string>
 #include <mutex>
+#include <string.h> // for memcpy
 
 #include <skippyHLS/skippy_m3u8.h>
 #include <skippyHLS/skippy_fragment.h>
