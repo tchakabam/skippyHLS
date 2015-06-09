@@ -8,6 +8,8 @@
 #include <iostream>
 #include <cmath>
 
+#include <string.h> // For strlen
+
 #include <glib-object.h>
 
 #include "skippyHLS/SkippyM3UParser.hpp"
