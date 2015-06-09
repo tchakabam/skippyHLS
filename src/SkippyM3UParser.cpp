@@ -4,22 +4,26 @@
  *      Author: Stephan Hesse <disparat@gmail.com>, <stephan@soundcloud.com>
  */
 
+#define UNIT_SECONDS 1000000000L // 10^9 (Nanoseconds)
+
+#define USE_GLIB_TOKENIZER FALSE
+#define USE_CPP11_TOKENIZER FALSE
+#define ENABLE_DEBUG_LOG FALSE
+
 #include <sstream>
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+
+#if USE_CPP11_TOKENIZER
 #include <regex>
+#endif
 
 #include <string.h> // For strlen
 
 #include <glib-object.h>
 
 #include "skippyHLS/SkippyM3UParser.hpp"
-
-#define UNIT_SECONDS 1000000000L // 10^9 (Nanoseconds)
-
-#define USE_GLIB_TOKENIZER FALSE
-#define ENABLE_DEBUG_LOG FALSE
 
 #if ENABLE_DEBUG_LOG
   #define LOG(...) g_message(__VA_ARGS__)
@@ -115,6 +119,8 @@ void glib_split(std::string s, std::vector<std::string>& tokens) {
 
 #endif
 
+#if USE_CPP11_TOKENIZER
+
 void regex_split(std::string s, std::vector<std::string>& tokens) {
   std::string item;
   std::regex ex ("\\W"); // matches all non-word chars
@@ -130,12 +136,55 @@ void regex_split(std::string s, std::vector<std::string>& tokens) {
   }
 }
 
+#endif
+
+void custom_split_push_token (std::string s, std::vector<std::string>& tokens, size_t index, size_t wordLength)
+{
+  std::string item;
+  item = s.substr(index, wordLength);
+  std::transform(item.begin(), item.end(), item.begin(), ::tolower);
+  tokens.push_back(item);
+  //LOG ("Token: %s", item.c_str());
+}
+
+void custom_split(std::string s, std::vector<std::string>& tokens) {
+
+  std::string::iterator it;
+  std::string delims ("# -.,:");
+  int lastMatch = 0,
+      wordLength = 0;
+
+  // Iterate and push what we find
+  for (int i=0;i<s.length();i++) {
+    for (it = delims.begin();it != delims.end();it++) {
+      // We have a match
+      if (s[i] == *it) {
+        //LOG ("Match: %c in %s", *it, s.c_str());
+        wordLength = i - lastMatch;
+        // Skip zero length tokens
+        if (wordLength > 0) {
+          custom_split_push_token (s, tokens, lastMatch, wordLength);
+          lastMatch = i + 1;
+          break;
+        } else {
+          lastMatch = i + 1;
+          continue;
+        }
+      }
+    }
+  }
+  // Push the very last (or only) word
+  custom_split_push_token (s, tokens, lastMatch, std::string::npos);
+}
+
 void SkippyM3UParser::MetaTokenize() {
   tokens.clear();
 #if USE_GLIB_TOKENIZER
   glib_split (line, tokens);
-#else
+#elif USE_CPP11_TOKENIZER
   regex_split (line, tokens);
+#else
+  custom_split (line, tokens);
 #endif
   tokenIt = tokens.begin();
 }
