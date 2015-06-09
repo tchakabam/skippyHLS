@@ -7,6 +7,8 @@
 #include <sstream>
 #include <iostream>
 #include <cmath>
+#include <algorithm>
+#include <regex>
 
 #include <string.h> // For strlen
 
@@ -14,9 +16,16 @@
 
 #include "skippyHLS/SkippyM3UParser.hpp"
 
-#define LOG(...) g_message(__VA_ARGS__)
-
 #define UNIT_SECONDS 1000000000L // 10^9 (Nanoseconds)
+
+#define USE_GLIB_TOKENIZER FALSE
+#define ENABLE_DEBUG_LOG FALSE
+
+#if ENABLE_DEBUG_LOG
+  #define LOG(...) g_message(__VA_ARGS__)
+#else
+  #define LOG(...)
+#endif
 
 using namespace std;
 
@@ -90,17 +99,44 @@ SkippyM3UPlaylist SkippyM3UParser::Parse(string uri, const string& playlist)
   return outputPlaylist;
 }
 
-void SkippyM3UParser::MetaTokenize() {
-  gchar** c_tokens = g_str_tokenize_and_fold (line.c_str(), NULL, NULL);
+#if USE_GLIB_TOKENIZER
+
+void glib_split(std::string s, std::vector<std::string>& tokens) {
+  gchar** c_tokens = g_str_tokenize_and_fold (s.c_str(), NULL, NULL);
   if (!c_tokens) {
-  	LOG ("Failed to tokenize string");
+    LOG ("Failed to tokenize string");
     return;
   }
-  tokens.clear();
   for (gchar** list = c_tokens;*list != NULL;list++) {
     tokens.push_back(std::string(*list));
   }
   g_strfreev (c_tokens);
+}
+
+#endif
+
+void regex_split(std::string s, std::vector<std::string>& tokens) {
+  std::string item;
+  std::regex ex ("\\W"); // matches all non-word chars
+  std::regex_token_iterator<std::string::iterator> it (s.begin(), s.end(), ex, -1);
+  std::regex_token_iterator<std::string::iterator> rend;
+  while (it != rend) {
+    item = *it++;
+    if (item.length() == 0) {
+      continue;
+    }
+    std::transform(item.begin(), item.end(), item.begin(), ::tolower);
+    tokens.push_back(item);
+  }
+}
+
+void SkippyM3UParser::MetaTokenize() {
+  tokens.clear();
+#if USE_GLIB_TOKENIZER
+  glib_split (line, tokens);
+#else
+  regex_split (line, tokens);
+#endif
   tokenIt = tokens.begin();
 }
 
