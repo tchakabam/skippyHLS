@@ -33,6 +33,88 @@
 
 using namespace std;
 
+typedef vector<string> Tokens;
+
+#if USE_GLIB_TOKENIZER
+
+Tokens glib_split(string s) {
+  auto tokens;
+  gchar** c_tokens = g_str_tokenize_and_fold (s.c_str(), NULL, NULL);
+  if (!c_tokens) {
+    LOG ("Failed to tokenize string");
+    return;
+  }
+  for (gchar** list = c_tokens;*list != NULL;list++) {
+    tokens.push_back(string(*list));
+  }
+  g_strfreev (c_tokens);
+  return tokens;
+}
+
+#endif
+
+#if USE_CPP11_TOKENIZER
+
+Tokens regex_split(string s) {
+  auto tokens, item ("");
+  regex ex ("\\W"); // matches all non-word chars
+  regex_token_iterator<string::iterator> it(begin(s), end(s), ex, -1), end;
+  for_each(it, end, [](auto it){
+    item = *it;
+    if (item.length() == 0) {
+      continue;
+    }
+    transform(begin(item), end(item), begin(item), ::tolower);
+    tokens.push_back(item);
+  });
+  return tokens;
+}
+
+#endif
+
+void custom_split_push_token (string s, Tokens& tokens, size_t index, size_t wordLength)
+{
+  string item;
+  item = s.substr(index, wordLength);
+  transform(begin(item), end(item), begin(item), ::tolower);
+  tokens.push_back(item);
+  //LOG ("Token: %s", item.c_str());
+}
+
+Tokens custom_split(string s) {
+  Tokens tokens;
+  string delims ("# -.,:");
+  string::iterator it;
+  int lastMatch = 0,
+      wordLength = 0;
+
+  // Iterate and push what we find
+  for (int i=0;i<s.length();i++) {
+    for (it = begin(delims);it != end(delims);it++) {
+      // We have a match
+      if (s[i] == *it) {
+        //LOG ("Match: %c in %s", *it, s.c_str());
+        wordLength = i - lastMatch;
+        // Skip zero length tokens
+        if (wordLength > 0) {
+          custom_split_push_token (s, tokens, lastMatch, wordLength);
+          lastMatch = i + 1;
+          break;
+        } else {
+          lastMatch = i + 1;
+          continue;
+        }
+      }
+    }
+  }
+  if (lastMatch < s.length()) {
+    // Push the very last (or only) word
+    custom_split_push_token (s, tokens, lastMatch, string::npos);
+  }
+
+  return tokens;
+}
+
 // words
 static const string EXT("ext");
 static const string X("x");
@@ -70,12 +152,10 @@ SkippyM3UParser::SkippyM3UParser()
 
 SkippyM3UPlaylist SkippyM3UParser::Parse(string uri, const string& playlist)
 {
-  std::stringstream in(playlist);
+  stringstream in(playlist);
 
   // Output playlist
   SkippyM3UPlaylist outputPlaylist(uri);
-
-  //std::cout << "Initialized memory." << "\n";
 
   size_t cnt = 0;
   while ( ++cnt ){
@@ -87,7 +167,7 @@ SkippyM3UPlaylist SkippyM3UParser::Parse(string uri, const string& playlist)
 	  }
 
 	  //read next line from file
-	  std::getline(in, line);
+	  getline(in, line);
 
 	  // (re-)evaluate main state of parser
 	  EvalState();
@@ -103,90 +183,15 @@ SkippyM3UPlaylist SkippyM3UParser::Parse(string uri, const string& playlist)
   return outputPlaylist;
 }
 
-#if USE_GLIB_TOKENIZER
-
-void glib_split(std::string s, std::vector<std::string>& tokens) {
-  gchar** c_tokens = g_str_tokenize_and_fold (s.c_str(), NULL, NULL);
-  if (!c_tokens) {
-    LOG ("Failed to tokenize string");
-    return;
-  }
-  for (gchar** list = c_tokens;*list != NULL;list++) {
-    tokens.push_back(std::string(*list));
-  }
-  g_strfreev (c_tokens);
-}
-
-#endif
-
-#if USE_CPP11_TOKENIZER
-
-void regex_split(std::string s, std::vector<std::string>& tokens) {
-  std::string item;
-  std::regex ex ("\\W"); // matches all non-word chars
-  std::regex_token_iterator<std::string::iterator> it (s.begin(), s.end(), ex, -1);
-  std::regex_token_iterator<std::string::iterator> rend;
-  while (it != rend) {
-    item = *it++;
-    if (item.length() == 0) {
-      continue;
-    }
-    std::transform(item.begin(), item.end(), item.begin(), ::tolower);
-    tokens.push_back(item);
-  }
-}
-
-#endif
-
-void custom_split_push_token (std::string s, std::vector<std::string>& tokens, size_t index, size_t wordLength)
-{
-  std::string item;
-  item = s.substr(index, wordLength);
-  std::transform(item.begin(), item.end(), item.begin(), ::tolower);
-  tokens.push_back(item);
-  //LOG ("Token: %s", item.c_str());
-}
-
-void custom_split(std::string s, std::vector<std::string>& tokens) {
-
-  std::string::iterator it;
-  std::string delims ("# -.,:");
-  int lastMatch = 0,
-      wordLength = 0;
-
-  // Iterate and push what we find
-  for (int i=0;i<s.length();i++) {
-    for (it = delims.begin();it != delims.end();it++) {
-      // We have a match
-      if (s[i] == *it) {
-        //LOG ("Match: %c in %s", *it, s.c_str());
-        wordLength = i - lastMatch;
-        // Skip zero length tokens
-        if (wordLength > 0) {
-          custom_split_push_token (s, tokens, lastMatch, wordLength);
-          lastMatch = i + 1;
-          break;
-        } else {
-          lastMatch = i + 1;
-          continue;
-        }
-      }
-    }
-  }
-  // Push the very last (or only) word
-  custom_split_push_token (s, tokens, lastMatch, std::string::npos);
-}
-
 void SkippyM3UParser::MetaTokenize() {
-  tokens.clear();
 #if USE_GLIB_TOKENIZER
-  glib_split (line, tokens);
+  tokens = glib_split (line);
 #elif USE_CPP11_TOKENIZER
-  regex_split (line, tokens);
+  tokens = regex_split (line);
 #else
-  custom_split (line, tokens);
+  tokens = custom_split (line);
 #endif
-  tokenIt = tokens.begin();
+  tokenIt = begin(tokens);
 }
 
 void SkippyM3UParser::EvalState() {
@@ -306,7 +311,7 @@ void SkippyM3UParser::ReadLine() {
 		break;
 	case STATE_URL_LINE:
 
-		if (line.find_first_of("\r", 0) != std::string::npos && line.length() >= 2) {
+		if (line.find_first_of("\r", 0) != string::npos && line.length() >= 2) {
 			line = line.substr(0, line.length()-1);
 		}
 	  	url = line;
