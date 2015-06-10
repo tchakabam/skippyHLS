@@ -104,11 +104,11 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   SkippyFragment *fragment;
   SkippyM3UItem item;
 
-  if (client->priv->current_index >= client->priv->playlist.size()) {
+  if (client->priv->current_index >= client->priv->playlist.items.size()) {
     return NULL;
   }
 
-  item = client->priv->playlist[client->priv->current_index];
+  item = client->priv->playlist.items.at (client->priv->current_index);
 
   fragment = skippy_fragment_new (item.url.c_str(), NULL, NULL);
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
@@ -122,7 +122,7 @@ void skippy_m3u8_client_advance_to_next_fragment (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
-  if (client->priv->current_index < client->priv->playlist.size()) {
+  if (client->priv->current_index < client->priv->playlist.items.size()) {
     client->priv->current_index++;
   }
 }
@@ -136,8 +136,8 @@ gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime tar
 
   GST_LOG ("Seek to target: %ld ns", target_pos);
 
-  for (int i=0;i<client->priv->playlist.size();i++) {
-    item = client->priv->playlist.at(i);
+  for (int i=0;i<client->priv->playlist.items.size();i++) {
+    item = client->priv->playlist.items.at(i);
     if (target_pos >= item.start && target_pos < item.end)
     {
       GST_LOG ("Seeked to index %d, interval %ld - %ld", i, (long) item.start, (long) item.end);

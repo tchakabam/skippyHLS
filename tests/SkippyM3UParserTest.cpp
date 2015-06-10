@@ -47,11 +47,11 @@ static void test_parse_fixture_with_14_items()
 	// Testing parser
 	SkippyM3UParser p;
 	SkippyM3UPlaylist list = p.parse(uri, playlist);
-	SkippyM3UPlaylist::iterator it = list.begin();
+	SkippyM3UPlaylistItems::iterator it = list.items.begin();
 
-	LOG ("List length is %d", (int) list.size());
+	LOG ("List length is %d", (int) list.items.size());
 
-	ASSERT (list.size() == 14);
+	ASSERT (list.items.size() == 14);
 
 	LOG ("Target duration: %lu, Total duration: %lu", list.targetDuration, list.totalDuration);
 
@@ -59,7 +59,7 @@ static void test_parse_fixture_with_14_items()
 	ASSERT (list.totalDuration == 110835651712);
 
 	int i = 0;
-	while(it != list.end()) {
+	while(it != list.items.end()) {
 		SkippyM3UItem item = *it++;
 
 		LOG ("Item %u, start: %lu, end: %lu, duration: %lu", item.index, item.start, item.end, item.duration);

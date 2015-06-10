@@ -388,7 +388,7 @@ void SkippyM3UParser::update(SkippyM3UPlaylist& playlist) {
     item.encrypted = false;
     item.index = index;
 
-    playlist.push_back( item );
+    playlist.items.push_back( item );
 
     position += item.duration;
     index++;

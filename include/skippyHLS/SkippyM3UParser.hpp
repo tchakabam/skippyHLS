@@ -22,7 +22,9 @@ struct SkippyM3UItem
   bool encrypted;
 };
 
-struct SkippyM3UPlaylist: public std::vector<SkippyM3UItem>
+typedef std::vector<SkippyM3UItem> SkippyM3UPlaylistItems;
+
+struct SkippyM3UPlaylist
 {
   SkippyM3UPlaylist(std::string uri)
   :uri(uri)
@@ -38,15 +40,20 @@ struct SkippyM3UPlaylist: public std::vector<SkippyM3UItem>
   std::string resolution;
   std::string uri;
   std::string type;
+
+  SkippyM3UPlaylistItems items;
 };
 
-struct SkippyM3UMasterPlaylist: public std::vector<SkippyM3UPlaylist>
+typedef std::vector<SkippyM3UPlaylist> SkippyM3UMasterPlaylistItems;
+
+struct SkippyM3UMasterPlaylist
 {
   SkippyM3UMasterPlaylist(std::string uri)
   :uri(uri)
   {}
 
   std::string uri;
+  SkippyM3UMasterPlaylistItems items;
 };
 
 class SkippyM3UParser
