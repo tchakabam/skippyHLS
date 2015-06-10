@@ -388,8 +388,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       skippy_hls_demux_reset (demux, FALSE);
       break;
     case GST_STATE_CHANGE_READY_TO_NULL:
-      skippy_uri_downloader_cancel (demux->downloader);
-      skippy_hls_demux_stop (demux);
+      skippy_hls_demux_pause_tasks (demux);
       skippy_hls_demux_reset (demux, FALSE);
       break;
     default:
@@ -989,15 +988,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyFragment *fragment;
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
-  GstState current_state, pending_state;
 
   GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");
-
-  gst_element_get_state (GST_ELEMENT(demux), &current_state, &pending_state, GST_CLOCK_TIME_NONE);
-
-  GST_DEBUG ("Current state: %s, Pending state: %s",
-    gst_element_state_get_name (current_state),
-    gst_element_state_get_name (pending_state));
 
   if (!skippy_hls_check_buffer_ahead (demux)) {
     return;
