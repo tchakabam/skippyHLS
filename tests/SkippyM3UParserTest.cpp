@@ -45,8 +45,8 @@ static void test_parse_fixture_with_14_items()
 	LOG ("Dump input test file: \n%s\n", playlist.c_str());
 
 	// Testing parser
-	SkippyM3UParser parser;
-	SkippyM3UPlaylist list = parser.Parse(uri, playlist);
+	SkippyM3UParser p;
+	SkippyM3UPlaylist list = p.parse(uri, playlist);
 	SkippyM3UPlaylist::iterator it = list.begin();
 
 	LOG ("List length is %d", (int) list.size());

@@ -78,7 +78,7 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
-  SkippyM3UParser parser;
+  SkippyM3UParser p;
   string loaded_playlist_uri = client->priv->playlist.uri;
 
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
@@ -90,7 +90,7 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
     loaded_playlist_uri = string(uri);
   }
 
-  client->priv->playlist = parser.Parse(loaded_playlist_uri, string(playlist));
+  client->priv->playlist = p.parse(loaded_playlist_uri, string(playlist));
 
   g_free (playlist);
   return TRUE;

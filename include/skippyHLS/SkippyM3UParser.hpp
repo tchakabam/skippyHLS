@@ -62,15 +62,16 @@ public:
 
 	SkippyM3UParser();
 
-	SkippyM3UPlaylist Parse(std::string uri, const std::string& playlist);
+	SkippyM3UPlaylist parse(std::string uri, const std::string& playlist);
 
 protected:
-  void ReadLine();
-  void EvalState();
-  void EvalSubstate();
-  void Update(SkippyM3UPlaylist& playlist);
-  void MetaTokenize();
-  bool NextToken();
+  void readLine();
+  void evalState();
+  void evalSubstate();
+  void update(SkippyM3UPlaylist& playlist);
+  void metaTokenize();
+  bool nextToken();
+  unsigned int tokenToUnsignedInt();
 
 private:
   // Parsing state

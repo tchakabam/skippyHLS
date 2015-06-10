@@ -8,7 +8,7 @@
 
 #define USE_GLIB_TOKENIZER FALSE
 #define USE_CPP11_TOKENIZER FALSE
-#define ENABLE_DEBUG_LOG FALSE
+#define ENABLE_DEBUG_LOG TRUE
 
 #include <sstream>
 #include <iostream>
@@ -150,7 +150,7 @@ SkippyM3UParser::SkippyM3UParser()
 ,targetDuration(0)
 {}
 
-SkippyM3UPlaylist SkippyM3UParser::Parse(string uri, const string& playlist)
+SkippyM3UPlaylist SkippyM3UParser::parse(string uri, const string& playlist)
 {
   stringstream in(playlist);
 
@@ -160,30 +160,30 @@ SkippyM3UPlaylist SkippyM3UParser::Parse(string uri, const string& playlist)
   size_t cnt = 0;
   while ( ++cnt ){
 
-	  //we have to check if the line was EOF now and break in case
-	  if ( in.eof() ) {
-	  	LOG ("End of file");
-	  	break;
-	  }
+    //we have to check if the line was EOF now and break in case
+    if ( in.eof() ) {
+      LOG ("End of file");
+      break;
+    }
 
-	  //read next line from file
-	  getline(in, line);
+    //read next line from file
+    getline(in, line);
 
-	  // (re-)evaluate main state of parser
-	  EvalState();
+    // evaluate main state of parser
+    evalState();
 
-	  // Parses the current line into tokens
-	  // and updates the parser members
-	  ReadLine();
+    // Parses the current line into tokens
+    // and updates the parser members
+    readLine();
 
-	  // Updates the output playlist after every line
-	  Update(outputPlaylist);
+    // Updates the output playlist after every line
+    update(outputPlaylist);
   }
 
   return outputPlaylist;
 }
 
-void SkippyM3UParser::MetaTokenize() {
+void SkippyM3UParser::metaTokenize() {
 #if USE_GLIB_TOKENIZER
   tokens = glib_split (line);
 #elif USE_CPP11_TOKENIZER
@@ -194,226 +194,223 @@ void SkippyM3UParser::MetaTokenize() {
   tokenIt = begin(tokens);
 }
 
-void SkippyM3UParser::EvalState() {
+void SkippyM3UParser::evalState() {
 
-	LOG ("Evaluating line: %s", line.c_str());
+  LOG ("Evaluating line: %s", line.c_str());
 
-	//is it META LINE ?
-	if (line.find("#EXT") == 0) { //check if its a META line and that are not already in META line state
+  if (line.find("#EXT") == 0) { //check if its a META line and that are not already in META line state
 
-		LOG ("Found meta line");
-		state = STATE_META_LINE;
+    LOG ("Found meta line");
+    state = STATE_META_LINE;
 
-	// could it be a URL ?
-	} else if(state == STATE_META_LINE && subState == SUBSTATE_INF) {
+  } else if(state == STATE_META_LINE && subState == SUBSTATE_INF) {
 
-		LOG ("Assuming URL line");
-		state = STATE_URL_LINE;
+    LOG ("Assuming URL line");
+    state = STATE_URL_LINE;
 
-	//OK if nothing correct and we had a URL _before_we can just reset the parser
-	} else if (state == STATE_URL_LINE) {
+  } else if (state == STATE_URL_LINE) {
 
-		LOG ("Reset");
-		state = STATE_RESET;
+    LOG ("Reset");
+    state = STATE_RESET;
 
-	//ok we had a META LINE before or NOTHING or a RESET so nothing happens...
-	//if we had META before we have to stay there because we wait for a URL to complete the output info for the object writer
-	} else if ( state == STATE_META_LINE || state == STATE_RESET)  {
+  } else if ( state == STATE_META_LINE || state == STATE_RESET)  {
 
-	}
-}
-
-bool SkippyM3UParser::NextToken() {
-	if(tokenIt == tokens.end()) {
-		return false;
-	}
-	token = *tokenIt++;
-	return true;
-}
-
-void SkippyM3UParser::EvalSubstate() {
-
-	// Get the very first token !
-	NextToken();
-
-	// Skip these tokens
- 	if (token == EXT) {
- 		NextToken();
- 	}
- 	if (token == X) {
- 		NextToken();
- 	}
-
-	LOG ("Evaluating metaline substate from token: %s", token.c_str());
-
- 	if (token == EXTM3U) {
-
- 		LOG ("Start of M3U");
-
-   	} else if ( token == EXTINF ) {
-
-		subState = SUBSTATE_INF;
-
-		LOG ("Sub-State to: INF");
-
-   	} else if ( token == STREAM && NextToken()
-   			&& token == INF) {
-
-		subState = SUBSTATE_STREAM;
-
-		LOG ("Sub-State to: STREAM");
-
-   	} else if ( token == MEDIA && NextToken()
-   			&& token == SEQUENCE && NextToken() ) {
-
-   		mediaSequenceNo = atoi(token.c_str());
-
-   		LOG ("Media sequence no: %u", mediaSequenceNo);
-
-   	} else if (token == PLAYLIST && NextToken()
-   			&& token == TYPE && NextToken() ) {
-
-   		playlistType = token;
-
-   		LOG ("Playlist type: %s", playlistType.c_str());
-
-   	} else if (token == VERSION && NextToken()) {
-
-   		version = atoi(token.c_str());
-
-   		LOG ("Version is: %u", version);
-   	} else if (token == TARGETDURATION && NextToken()) {
-
-   		targetDuration = atoi(token.c_str());
-
-   		LOG ("Target duration is: %u", targetDuration);
-   	} else if (token == ENDLIST) {
-
-   		LOG("Sub-State to: RESET (end of list)");
-
-		subState = SUBSTATE_END;
-
-   	} else {
-
-   		LOG("Sub-State to: RESET (unknown token): %s", token.c_str());
-
-   		subState = SUBSTATE_RESET;
-   	}
-
-}
-
-void SkippyM3UParser::ReadLine() {
-
-    //tokenize meta string -> split up into pieces seperated by non-alphanumeric chars
-
-	switch(state) {
-	case STATE_RESET:
-		break;
-	case STATE_URL_LINE:
-
-		if (line.find_first_of("\r", 0) != string::npos && line.length() >= 2) {
-			line = line.substr(0, line.length()-1);
-		}
-	  	url = line;
-	  	state = STATE_URL_LINE;
-	  	subState = SUBSTATE_RESET;
-  		break;
-
-	case STATE_META_LINE:
-
-		// Reset the segment length (duration) field
-		length = -1;
-
-		// Tokenize the line
-		MetaTokenize();
-
-		// Evaluate the substate
-	    EvalSubstate();
-
-	    //iterate over all tokens of this line
-	    while (NextToken())
-	    {
-			switch(subState) {
-	      	case SUBSTATE_INF:
-	        	if (length == -1) {
-	        		length = (float) strtod(token.c_str(), NULL);
-	        	} else {
-	        		float decimals = ((float) strtod(token.c_str(), NULL));
-	        		LOG ("Got decimals: %f (%s)", decimals, token.c_str());
-	        		length += decimals / pow(10, strlen(token.c_str()));
-	        	}
-		        LOG ("Got INF duration: %f", length);
-	        	break;
-	    	case SUBSTATE_STREAM:
-		        if ( token == PROGRAM && NextToken () && token == ID ) {
-		         NextToken();
-		         programId = atoi(token.c_str());
-		        }
-		        else if ( token == CODEC ) {
-		         NextToken();
-		         codec = token;
-		        }
-		        else if ( token == RES) {
-		         NextToken();
-		         res = token;
-		        }
-		        else if ( token == BANDWIDTH) {
-		         NextToken();
-		         bandwidth = atoi(token.c_str());
-		        }
-				break;
-			case SUBSTATE_RESET:
-			default:
-	        	break;
-			}
-	    }
-    	break;
   }
 }
 
-/*
- * the object writing machine. takes the parsing machine states synchronisly with them as input and their
- */
-void SkippyM3UParser::Update(SkippyM3UPlaylist& playlist) {
+bool SkippyM3UParser::nextToken() {
+  if(tokenIt == tokens.end()) {
+    return false;
+  }
+  token = *tokenIt++;
+  return true;
+}
 
-	/*
-	* use output of parsing machine to write to object
-	*/
-	switch(state) {
-	case STATE_RESET:
-		break;
-	case STATE_URL_LINE: {
-		SkippyM3UItem item;
-		item.start = position;
-		item.duration = length * UNIT_SECONDS;
-		item.end = item.start + item.duration;
-		item.url = url;
-		item.encrypted = false;
-		item.index = index;
+void SkippyM3UParser::evalSubstate() {
 
-	    playlist.push_back( item );
+  // Get the very first token !
+  nextToken();
 
-		position += item.duration;
-		index++;
+  // Skip these tokens
+  if (token == EXT) {
+    nextToken();
+  }
+  if (token == X) {
+    nextToken();
+  }
 
-	    LOG ("Added item: %s", url.c_str());
-	    break;
-		}
-	case STATE_META_LINE:
-		switch (subState) {
-		case SUBSTATE_END:
-			playlist.bandwidthKbps = bandwidth; //kbps
-			playlist.codec = codec;
-			playlist.resolution = res;
-			playlist.programId = programId;
-			playlist.sequenceNo = mediaSequenceNo;
-			playlist.targetDuration = targetDuration * UNIT_SECONDS;
-			playlist.totalDuration = position;
-			playlist.type = playlistType;
-			break;
-		default:
-			break;
-		}
-  		break;
-  	}
+  LOG ("Evaluating metaline substate from token: %s", token.c_str());
+
+  if (token == EXTM3U) {
+
+    LOG ("Start of M3U");
+
+  } else if ( token == EXTINF ) {
+
+    subState = SUBSTATE_INF;
+
+    LOG ("Sub-State to: INF");
+
+  } else if ( token == STREAM && nextToken()
+      && token == INF) {
+
+    subState = SUBSTATE_STREAM;
+
+    LOG ("Sub-State to: STREAM");
+
+  } else if ( token == MEDIA && nextToken()
+      && token == SEQUENCE && nextToken() ) {
+
+    mediaSequenceNo = tokenToUnsignedInt();
+
+    LOG ("Media sequence no: %u", mediaSequenceNo);
+
+  } else if (token == PLAYLIST && nextToken()
+      && token == TYPE && nextToken() ) {
+
+    playlistType = token;
+
+    LOG ("Playlist type: %s", playlistType.c_str());
+
+  } else if (token == VERSION && nextToken()) {
+
+    version = tokenToUnsignedInt();
+
+    LOG ("Version is: %u", version);
+  } else if (token == TARGETDURATION && nextToken()) {
+
+    targetDuration = tokenToUnsignedInt();
+
+    LOG ("Target duration is: %u", targetDuration);
+  } else if (token == ENDLIST) {
+
+    LOG("Sub-State to: RESET (end of list)");
+
+  subState = SUBSTATE_END;
+
+  } else {
+
+    LOG("Sub-State to: RESET (unknown token): %s", token.c_str());
+
+    subState = SUBSTATE_RESET;
+  }
+
+}
+
+unsigned int SkippyM3UParser::tokenToUnsignedInt()
+{
+  auto i = 0;
+  if (! (istringstream(token) >> i)) {
+    LOG ("Failed to parse integer value!");
+    state = STATE_RESET;
+  }
+  return i;
+}
+
+void SkippyM3UParser::readLine() {
+
+  switch(state) {
+  case STATE_RESET:
+    break;
+  case STATE_URL_LINE:
+    if (line.find_first_of("\r", 0) != string::npos && line.length() >= 2) {
+      line = line.substr(0, line.length()-1);
+    }
+    url = line;
+    state = STATE_URL_LINE;
+    subState = SUBSTATE_RESET;
+    break;
+  case STATE_META_LINE:
+
+    // Reset the segment length (duration) field
+    length = -1;
+
+    // Tokenize the line
+    metaTokenize();
+
+    // Evaluate the substate
+    evalSubstate();
+
+    //iterate over all tokens of this line
+    while (nextToken()) {
+      switch(subState) {
+      case SUBSTATE_INF: {
+        float decimals;
+        // Integer part already parsed?
+        if (length == -1) {
+          length = (float) tokenToUnsignedInt();
+        } else { // Now parse decimal part
+          decimals = (float) tokenToUnsignedInt();
+          LOG ("Got decimals: %f (%s)", decimals, token.c_str());
+          length += decimals / pow(10, strlen(token.c_str()));
+        }
+        LOG ("Got INF duration: %f", length);
+        break;
+      }
+      case SUBSTATE_STREAM:
+        if ( token == PROGRAM && nextToken () && token == ID ) {
+         nextToken();
+         programId = tokenToUnsignedInt();
+        }
+        else if ( token == CODEC ) {
+         nextToken();
+         codec = token;
+        }
+        else if ( token == RES) {
+         nextToken();
+         res = token;
+        }
+        else if ( token == BANDWIDTH) {
+         nextToken();
+         bandwidth = tokenToUnsignedInt();
+        }
+        break;
+      case SUBSTATE_RESET:
+      default:
+        break;
+      }
+    }
+      break;
+  }
+}
+
+void SkippyM3UParser::update(SkippyM3UPlaylist& playlist) {
+
+  switch(state) {
+  case STATE_RESET:
+    break;
+  case STATE_URL_LINE: {
+    SkippyM3UItem item;
+    item.start = position;
+    item.duration = length * UNIT_SECONDS;
+    item.end = item.start + item.duration;
+    item.url = url;
+    item.encrypted = false;
+    item.index = index;
+
+    playlist.push_back( item );
+
+    position += item.duration;
+    index++;
+
+    LOG ("Added item: %s", url.c_str());
+    break;
+  }
+  case STATE_META_LINE:
+    switch (subState) {
+    case SUBSTATE_END:
+      playlist.bandwidthKbps = bandwidth; //kbps
+      playlist.codec = codec;
+      playlist.resolution = res;
+      playlist.programId = programId;
+      playlist.sequenceNo = mediaSequenceNo;
+      playlist.targetDuration = targetDuration * UNIT_SECONDS;
+      playlist.totalDuration = position;
+      playlist.type = playlistType;
+      break;
+    default:
+      break;
+    }
+    break;
+  }
 }
