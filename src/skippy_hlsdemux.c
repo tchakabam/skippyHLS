@@ -115,9 +115,9 @@ skippy_hls_demux_dispose (GObject * obj)
     demux->stream_task = NULL;
   }
 
-  if (demux->downloader) {
-    g_object_unref (demux->downloader);
-    demux->downloader = NULL;
+  if (demux->playlist_downloader) {
+    g_object_unref (demux->playlist_downloader);
+    demux->playlist_downloader = NULL;
   }
 
   if (demux->queue_sinkpad) {
