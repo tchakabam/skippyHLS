@@ -76,8 +76,6 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
 gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer)
 {
-  lock_guard<recursive_mutex> lock(client->priv->mutex);
-
   SkippyM3UParser p;
   string loaded_playlist_uri = client->priv->playlist.uri;
 
@@ -89,8 +87,10 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
   if (uri != NULL) {
     loaded_playlist_uri = string(uri);
   }
-
-  client->priv->playlist = p.parse(loaded_playlist_uri, string(playlist));
+  {
+    lock_guard<recursive_mutex> lock(client->priv->mutex);
+    client->priv->playlist = p.parse(loaded_playlist_uri, string(playlist));
+  }
 
   g_free (playlist);
   return TRUE;
@@ -156,7 +156,7 @@ const gchar* skippy_m3u8_client_get_uri(SkippyM3U8Client * client)
 
 const gchar* skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate)
 {
-  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  //lock_guard<recursive_mutex> lock(client->priv->mutex);
   return NULL;
 }
 
@@ -168,8 +168,7 @@ const gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client)
 
 void skippy_m3u8_client_set_current_playlist (SkippyM3U8Client * client, const gchar *uri)
 {
-  lock_guard<recursive_mutex> lock(client->priv->mutex);
-  ;
+  //lock_guard<recursive_mutex> lock(client->priv->mutex);
 }
 
 GstClockTime skippy_m3u8_client_get_total_duration (SkippyM3U8Client * client)
@@ -186,7 +185,7 @@ GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client)
 
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client)
 {
-  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  //lock_guard<recursive_mutex> lock(client->priv->mutex);
   return FALSE;
 }
 
@@ -202,6 +201,6 @@ gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client)
 
 gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client)
 {
-  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  //lock_guard<recursive_mutex> lock(client->priv->mutex);
   return TRUE;
 }
