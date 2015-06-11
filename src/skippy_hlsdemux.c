@@ -352,7 +352,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   switch (transition) {
     // Bring the element back into initial state
     case GST_STATE_CHANGE_PAUSED_TO_READY:
-      skippy_hls_demux_stop (demux);
+      skippy_hls_demux_pause (demux);
       break;
     default:
       break;
@@ -856,12 +856,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   guint queue_level;
 
   GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");
-
-  gst_element_get_state (GST_ELEMENT(demux), &current_state, &pending_state, GST_CLOCK_TIME_NONE);
-
-  GST_TRACE ("Current state: %s, Pending state: %s",
-    gst_element_state_get_name (current_state),
-    gst_element_state_get_name (pending_state));
 
   // Monitor queue levels
   g_object_get (demux->queue, "current-level-buffers", &queue_level, NULL);
