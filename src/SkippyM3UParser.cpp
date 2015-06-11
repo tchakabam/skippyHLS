@@ -5,21 +5,11 @@
  */
 
 #define UNIT_SECONDS 1000000000L // 10^9 (Nanoseconds)
-
-#define USE_GLIB_TOKENIZER FALSE
-#define USE_CPP11_TOKENIZER FALSE
 #define ENABLE_DEBUG_LOG TRUE
 
 #include <sstream>
-#include <iostream>
 #include <cmath>
 #include <algorithm>
-
-#if USE_CPP11_TOKENIZER
-#include <regex>
-#endif
-
-#include <string.h> // For strlen
 
 #include <glib-object.h>
 
@@ -33,109 +23,42 @@
 
 using namespace std;
 
-typedef vector<string> Tokens;
-
-#if USE_GLIB_TOKENIZER
-
-Tokens glib_split(string s) {
-  auto tokens;
-  gchar** c_tokens = g_str_tokenize_and_fold (s.c_str(), NULL, NULL);
-  if (!c_tokens) {
-    LOG ("Failed to tokenize string");
-    return;
-  }
-  for (gchar** list = c_tokens;*list != NULL;list++) {
-    tokens.push_back(string(*list));
-  }
-  g_strfreev (c_tokens);
-  return tokens;
-}
-
-#endif
-
-#if USE_CPP11_TOKENIZER
-
-Tokens regex_split(string s) {
-  auto tokens, item ("");
-  regex ex ("\\W"); // matches all non-word chars
-  regex_token_iterator<string::iterator> it(begin(s), end(s), ex, -1), end;
-  for_each(it, end, [](auto it){
-    item = *it;
-    if (item.length() == 0) {
-      continue;
-    }
-    transform(begin(item), end(item), begin(item), ::tolower);
-    tokens.push_back(item);
-  });
-  return tokens;
-}
-
-#endif
-
-void custom_split_push_token (string s, Tokens& tokens, size_t index, size_t wordLength)
-{
-  string item;
-  item = s.substr(index, wordLength);
-  transform(begin(item), end(item), begin(item), ::tolower);
-  tokens.push_back(item);
-  //LOG ("Token: %s", item.c_str());
-}
-
-Tokens custom_split(string s) {
-  Tokens tokens;
-  string delims ("# -.,:");
-  string::iterator it;
-  int lastMatch = 0,
-      wordLength = 0;
-
-  // Iterate and push what we find
-  for (int i=0;i<s.length();i++) {
-    for (it = begin(delims);it != end(delims);it++) {
-      // We have a match
-      if (s[i] == *it) {
-        //LOG ("Match: %c in %s", *it, s.c_str());
-        wordLength = i - lastMatch;
-        // Skip zero length tokens
-        if (wordLength > 0) {
-          custom_split_push_token (s, tokens, lastMatch, wordLength);
-          lastMatch = i + 1;
-          break;
-        } else {
-          lastMatch = i + 1;
-          continue;
-        }
-      }
-    }
-  }
-  if (lastMatch < s.length()) {
-    // Push the very last (or only) word
-    custom_split_push_token (s, tokens, lastMatch, string::npos);
-  }
-
-  return tokens;
-}
-
+static const string default_delimiters ("# -.,:");
 // words
-static const string EXT("ext");
-static const string X("x");
-static const string INF("inf");
-static const string ID("id");
-static const string EXTM3U("extm3u");
-static const string EXTINF("extinf");
-static const string PLAYLIST("playlist");
-static const string TYPE("type");
-static const string STREAM("stream");
-static const string PROGRAM("program");
-static const string VERSION("version");
-static const string BANDWIDTH("bandwidth");
-static const string RES("res");
-static const string CODEC("codec");
-static const string VOD("vod");
-static const string EVENT("event");
-static const string TARGETDURATION("targetduration");
-static const string MEDIA("media");
-static const string SEQUENCE("sequence");
-static const string ENDLIST("endlist");
+static const string EXT("EXT");
+static const string X("X");
+static const string INF("INF");
+static const string ID("ID");
+static const string EXTM3U("EXTM3U");
+static const string EXTINF("EXTINF");
+static const string PLAYLIST("PLAYLIST");
+static const string TYPE("TYPE");
+static const string STREAM("STREAM");
+static const string PROGRAM("PROGRAM");
+static const string VERSION("VERSION");
+static const string BANDWIDTH("BANDWIDTH");
+static const string RES("READ");
+static const string CODEC("CODEC");
+static const string VOD("VOD");
+static const string EVENT("EVENT");
+static const string TARGETDURATION("TARGETDURATION");
+static const string MEDIA("MEDIA");
+static const string SEQUENCE("SEQUENCE");
+static const string ENDLIST("ENDLIST");
+
+typedef vector<string> Tokens;
+Tokens custom_split(const string &s, const string &delim = default_delimiters) {
+	vector<string> result;
+	auto from = begin(s);
+	auto endIt = end(s);
+	auto is_delim = [&](const char &c) { return delim.find(c) != string::npos; };
+	while( (from = find_if_not(from, endIt, is_delim)) != endIt ){
+		auto tokEnd = find_if(from, endIt, is_delim);
+		result.push_back(string(from, tokEnd));
+		from = tokEnd;
+	}
+	return result;
+}
 
 SkippyM3UParser::SkippyM3UParser()
 :state (STATE_RESET)
@@ -157,18 +80,7 @@ SkippyM3UPlaylist SkippyM3UParser::parse(string uri, const string& playlist)
   // Output playlist
   SkippyM3UPlaylist outputPlaylist(uri);
 
-  size_t cnt = 0;
-  while ( ++cnt ){
-
-    //we have to check if the line was EOF now and break in case
-    if ( in.eof() ) {
-      LOG ("End of file");
-      break;
-    }
-
-    //read next line from file
-    getline(in, line);
-
+  while ( getline(in, line) ){
     // evaluate main state of parser
     evalState();
 
@@ -184,13 +96,7 @@ SkippyM3UPlaylist SkippyM3UParser::parse(string uri, const string& playlist)
 }
 
 void SkippyM3UParser::metaTokenize() {
-#if USE_GLIB_TOKENIZER
-  tokens = glib_split (line);
-#elif USE_CPP11_TOKENIZER
-  tokens = regex_split (line);
-#else
   tokens = custom_split (line);
-#endif
   tokenIt = begin(tokens);
 }
 
@@ -297,9 +203,9 @@ void SkippyM3UParser::evalSubstate() {
 
 }
 
-unsigned int SkippyM3UParser::tokenToUnsignedInt()
+uint64_t SkippyM3UParser::tokenToUnsignedInt()
 {
-  auto i = 0;
+  uint64_t i = 0;
   if (! (istringstream(token) >> i)) {
     LOG ("Failed to parse integer value!");
     state = STATE_RESET;
@@ -330,19 +236,18 @@ void SkippyM3UParser::readLine() {
 
     // Evaluate the substate
     evalSubstate();
-
+// 9.12345
     //iterate over all tokens of this line
     while (nextToken()) {
       switch(subState) {
       case SUBSTATE_INF: {
-        float decimals;
         // Integer part already parsed?
         if (length == -1) {
           length = (float) tokenToUnsignedInt();
-        } else { // Now parse decimal part
-          decimals = (float) tokenToUnsignedInt();
+        } else { // Now parse fractional part
+          double decimals = tokenToUnsignedInt();
           LOG ("Got decimals: %f (%s)", decimals, token.c_str());
-          length += decimals / pow(10, strlen(token.c_str()));
+          length += decimals / pow(10, token.length());
         }
         LOG ("Got INF duration: %f", length);
         break;

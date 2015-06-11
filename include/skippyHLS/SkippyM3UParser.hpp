@@ -16,9 +16,9 @@ struct SkippyM3UItem
  {
   std::string url, keyUri;
   //size_t rangeStart, rangeEnd; // not supported yet
-  unsigned int index;
-  unsigned long start, end, duration; // Nanoseconds
-  unsigned char iv[16];
+  uint64_t index;
+  uint64_t start, end, duration; // Nanoseconds
+  uint8_t iv[16];
   bool encrypted;
 };
 
@@ -30,11 +30,11 @@ struct SkippyM3UPlaylist
   :uri(uri)
   {}
 
-  unsigned int version;
-  unsigned int programId;
-  unsigned int sequenceNo;
-  unsigned int bandwidthKbps; // kbps
-  unsigned long targetDuration, totalDuration; // Nanoseconds
+  uint64_t version;
+  uint64_t programId;
+  uint64_t sequenceNo;
+  uint64_t bandwidthKbps; // kbps
+  uint64_t targetDuration, totalDuration; // Nanoseconds
 
   std::string codec;
   std::string resolution;
@@ -78,16 +78,16 @@ protected:
   void update(SkippyM3UPlaylist& playlist);
   void metaTokenize();
   bool nextToken();
-  unsigned int tokenToUnsignedInt();
+  uint64_t tokenToUnsignedInt();
 
 private:
   // Parsing state
   State state;
   SubState subState;
 
-  unsigned int version;
-  unsigned int mediaSequenceNo;
-  unsigned int targetDuration;
+  uint64_t version;
+  uint64_t mediaSequenceNo;
+  uint64_t targetDuration;
   std::string playlistType;
 
   // Line buffer
@@ -97,15 +97,15 @@ private:
   std::vector<std::string>::iterator tokenIt;
 
   // Stream sub-state vars
-  unsigned int programId;
-  unsigned int bandwidth;
+  uint64_t programId;
+  uint64_t bandwidth;
   std::string res;
   std::string codec;
 
   // Xinf sub-state vars
-  float length;
-  unsigned int index;
-  unsigned long position;
+  double length;
+  uint64_t index;
+  uint64_t position;
 
   // URI state vars
   std::string url;
