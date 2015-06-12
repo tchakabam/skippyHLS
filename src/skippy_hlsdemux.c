@@ -105,8 +105,6 @@ static gboolean skippy_hls_demux_src_query (GstPad * pad, GstObject * parent,
 static void skippy_hls_demux_stream_loop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_stop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux);
-static gboolean skippy_hls_demux_switch_playlist (SkippyHLSDemux * demux,
-    SkippyFragment * fragment);
 static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
 static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose);
@@ -1237,7 +1235,6 @@ skippy_hls_demux_change_playlist (SkippyHLSDemux * demux, guint max_bitrate)
   previous_variant = skippy_m3u8_client_get_current_variant (demux->client);
   current_variant = skippy_m3u8_client_get_playlist_for_bitrate (demux->client, max_bitrate);
 
-retry_failover_protection:
   old_bandwidth = previous_variant->bandwidth;
   new_bandwidth = current_variant->bandwidth;
 
