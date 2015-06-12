@@ -852,7 +852,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyFragment *fragment;
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
-  GstState current_state, pending_state;
   guint queue_level;
 
   GST_DEBUG_OBJECT (demux, "Entering stream task, polling ...");

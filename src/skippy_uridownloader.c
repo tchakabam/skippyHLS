@@ -78,7 +78,6 @@ static void
 skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
-  GstElementClass *element_class = (GstElementClass *) klass;
 
   g_type_class_add_private (klass, sizeof (SkippyUriDownloaderPrivate));
 
@@ -236,22 +235,6 @@ skippy_uri_downloader_finalize (GObject * object)
   G_OBJECT_CLASS (skippy_uri_downloader_parent_class)->finalize (object);
 }
 
-static GstStateChangeReturn
-skippy_uri_downloader_change_state (GstElement * element, GstStateChange transition)
-{
-  GstStateChangeReturn ret;
-  SkippyUriDownloader *demux = SKIPPY_URI_DOWNLOADER (element);
-
-  GST_TRACE_OBJECT (demux, "Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
-    gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
-
-  GST_TRACE ("Calling parent class state change handler ...");
-  ret = GST_ELEMENT_CLASS (skippy_uri_downloader_parent_class)->change_state (element, transition);
-  GST_TRACE ("State transition result: %s", gst_element_state_change_return_get_name (ret));
-
-  return ret;
-}
-
 SkippyUriDownloader *
 skippy_uri_downloader_new ()
 {
@@ -270,7 +253,6 @@ skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
   guint64 start_time, guint64 stop_time,
   gsize bytes_loaded, gsize bytes_total)
 {
-  GstElement* parent;
   GstStructure* s;
   float percentage = 100.0f * bytes_loaded / bytes_total;
 

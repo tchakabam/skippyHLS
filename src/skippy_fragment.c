@@ -40,7 +40,6 @@ GST_DEBUG_CATEGORY_STATIC (skippy_fragment_debug);
 G_DEFINE_TYPE (SkippyFragment, skippy_fragment, G_TYPE_OBJECT);
 
 static void skippy_fragment_dispose (GObject * object);
-static void skippy_fragment_finalize (GObject * object);
 
 static void
 skippy_fragment_class_init (SkippyFragmentClass * klass)
@@ -56,8 +55,6 @@ skippy_fragment_class_init (SkippyFragmentClass * klass)
 static void
 skippy_fragment_init (SkippyFragment * fragment)
 {
-  SkippyFragmentPrivate *priv;
-
   fragment->download_start_time = gst_util_get_timestamp ();
   fragment->start_time = 0;
   fragment->stop_time = 0;
