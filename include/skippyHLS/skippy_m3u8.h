@@ -46,13 +46,13 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
 void skippy_m3u8_client_advance_to_next_fragment (SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime target);
 
-const gchar *skippy_m3u8_client_get_uri(SkippyM3U8Client * client);
+gchar *skippy_m3u8_client_get_uri(SkippyM3U8Client * client);
 
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
 gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer);
 
-const gchar *skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate);
-const gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client);
+gchar *skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate);
+gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client);
 void skippy_m3u8_client_set_current_playlist (SkippyM3U8Client * client, const gchar *uri);
 
 GstClockTime skippy_m3u8_client_get_total_duration (SkippyM3U8Client * client);

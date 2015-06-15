@@ -606,7 +606,7 @@ skippy_hls_demux_load_initial_playlist (SkippyHLSDemux* demux)
 static void
 skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux)
 {
-  const gchar* variant;
+  gchar* variant;
 
   /* If this playlist is a variant playlist, select the first one
    * and update it */
@@ -619,10 +619,12 @@ skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux)
     }
     // Fetch the playlist
     if (!skippy_hls_demux_update_playlist (demux)) {
+      g_free (variant);
       return;
     }
     // Set the variant as current playlist to be used
     skippy_m3u8_client_set_current_playlist (demux->client, variant);
+    g_free (variant);
   }
 
   // Post duration message if non-live
@@ -672,6 +674,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
   gboolean ret = FALSE;
   GstFormat fmt;
   gint64 stop = -1;
+  gchar* uri;
 
   if (query == NULL)
     return FALSE;
@@ -693,7 +696,9 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       break;
     case GST_QUERY_URI:
       if (hlsdemux->client) {
-        gst_query_set_uri (query, skippy_m3u8_client_get_uri (hlsdemux->client));
+        uri = skippy_m3u8_client_get_uri (hlsdemux->client);
+        gst_query_set_uri (query, uri);
+        g_free (uri);
         ret = TRUE;
       }
       break;
@@ -1050,6 +1055,7 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
   GstStructure *stat_msg;
   guint64 size;
   SkippyFragment* fragment;
+  gchar* uri;
 
   g_return_val_if_fail (*err == NULL, NULL);
 
@@ -1064,14 +1070,17 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
       "Fetching next fragment %s (range=%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT
       ")", fragment->uri, fragment->range_start, fragment->range_end);
 
+  uri = skippy_m3u8_client_get_uri (demux->client);
   *fetch_ret = skippy_uri_downloader_fetch_fragment (demux->downloader,
     fragment, // Media fragment to load
-    skippy_m3u8_client_get_uri (demux->client), // Referrer
+    uri, // Referrer
     FALSE, // Compress (useless with coded media data)
     FALSE, // Refresh (don't wipe out cache)
     skippy_m3u8_client_allow_cache (demux->client) && demux->caching_enabled, // Allow caching directive
     err // Error
   );
+  g_free (uri);
+
   // NOTE: We don't want to handle the error here, we just pass it in and let it be handled by our caller
 
   // If it's not useable just return NULL
@@ -1111,7 +1120,8 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
   GstStructure *stat_msg;
   GError* err;
   SkippyUriDownloaderFetchReturn fetch_ret;
-  const gchar* current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
+  gchar* playlist_uri;
+  gchar* current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
 
   if (!current_playlist) {
     return FALSE;
@@ -1120,14 +1130,17 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
   // Create a download
   download = skippy_fragment_new (current_playlist, NULL, NULL);
   // Download it
+  playlist_uri = skippy_m3u8_client_get_uri (demux->client);
   fetch_ret = skippy_uri_downloader_fetch_fragment (demux->downloader,
     download, // Media fragment to load
-    skippy_m3u8_client_get_uri (demux->client), // Referrer
+    playlist_uri, // Referrer
     TRUE, // Compress (good for playlists)
     TRUE, // Refresh (wipe out cached stuff)
     skippy_m3u8_client_allow_cache (demux->client) && demux->caching_enabled, // Allow caching directive
     &err // Error
   );
+  g_free (playlist_uri);
+  g_free (current_playlist);
   // Handle fetch result
   switch (fetch_ret) {
   case SKIPPY_URI_DOWNLOADER_COMPLETED:

@@ -148,22 +148,22 @@ gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime tar
   return FALSE;
 }
 
-const gchar* skippy_m3u8_client_get_uri(SkippyM3U8Client * client)
+gchar* skippy_m3u8_client_get_uri(SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return client->priv->playlist.uri.c_str();
+  return g_strdup(client->priv->playlist.uri.c_str());
 }
 
-const gchar* skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate)
+gchar* skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate)
 {
   //lock_guard<recursive_mutex> lock(client->priv->mutex);
   return NULL;
 }
 
-const gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client)
+gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return client->priv->playlist.uri.c_str();
+  return g_strdup(client->priv->playlist.uri.c_str());
 }
 
 void skippy_m3u8_client_set_current_playlist (SkippyM3U8Client * client, const gchar *uri)
