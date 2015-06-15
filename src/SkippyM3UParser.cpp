@@ -5,7 +5,7 @@
  */
 
 #define UNIT_SECONDS 1000000000L // 10^9 (Nanoseconds)
-#define ENABLE_DEBUG_LOG TRUE
+#define ENABLE_DEBUG_LOG FALSE
 
 #include <sstream>
 #include <cmath>
