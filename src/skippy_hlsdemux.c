@@ -201,6 +201,8 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
 
   GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhlsdemux", 0,
       "Skippy HLS client");
+
+  skippy_m3u8_client_init ();
 }
 
 // TODO: send a message here on the bus instead
@@ -414,10 +416,7 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   GstSeekFlags flags;
   GstSeekType start_type, stop_type;
   gint64 start, stop;
-  GList *walk;
-  GstClockTime current_pos, target_pos;
-  gint current_sequence;
-  SkippyM3U8MediaFile *file;
+  GstClockTime target_pos;
 
   GST_INFO ("Received GST_EVENT_SEEK");
 
@@ -428,8 +427,7 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
     return FALSE;
   }
   // Parse seek event
-  gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start,
-      &stop_type, &stop);
+  gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start, &stop_type, &stop);
   if (format != GST_FORMAT_TIME) {
     GST_WARNING ("Received seek event not in time format");
     gst_event_unref (event);
@@ -440,30 +438,8 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
       " stop: %" GST_TIME_FORMAT, rate, GST_TIME_ARGS (start),
       GST_TIME_ARGS (stop));
 
-  /* Walk the stream data model */
-  SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-  file = SKIPPY_M3U8_MEDIA_FILE (demux->client->current->files->data);
-  current_sequence = file->sequence;
-  current_pos = 0;
+  // Set target position
   target_pos = (GstClockTime) start;
-  /* FIXME: Here we need proper discont handling */
-  for (walk = demux->client->current->files; walk; walk = walk->next) {
-    file = walk->data;
-
-    current_sequence = file->sequence;
-    if (current_pos <= target_pos
-        && target_pos < current_pos + file->duration) {
-      break;
-    }
-    current_pos += file->duration;
-  }
-  SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
-
-  // If we seeked over duration just increment the sequence
-  if (walk == NULL) {
-    GST_DEBUG_OBJECT (demux, "seeking further than track duration");
-    current_sequence++;
-  }
 
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
@@ -474,16 +450,19 @@ skippy_hls_demux_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Pausing streaming task
   skippy_hls_demux_pause_tasks (demux);
 
-  // Updating data model
-  SKIPPY_M3U8_CLIENT_LOCK (demux->client);
-  GST_DEBUG_OBJECT (demux, "seeking to sequence %d", current_sequence);
-  demux->client->sequence = current_sequence;
-  demux->client->sequence_position = current_pos;
-  SKIPPY_M3U8_CLIENT_UNLOCK (demux->client);
+  // Update M3U8 model
+  if (!skippy_m3u8_client_seek_to (demux->client, target_pos))
+  {
+    GST_WARNING ("Failed to find seek target position in M3U8 playlist");
+    gst_event_unref (event);
+    return FALSE;
+  }
 
-  // Update data segment
+  // Update current  data segment
   gst_segment_do_seek (&demux->segment, rate, format, flags, start_type,
       start, stop_type, stop, NULL);
+
+  // Set flags
   demux->need_segment = TRUE;
   demux->seeked = TRUE;
 
@@ -602,7 +581,7 @@ skippy_hls_demux_load_initial_playlist (SkippyHLSDemux* demux)
   ret = skippy_hls_demux_query_location (demux);
 
   // Parse playlist
-  if (!skippy_m3u8_client_load_playlist (demux->client, demux->playlist)) {
+  if (!skippy_m3u8_client_load_playlist (demux->client, NULL, demux->playlist)) {
     GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
     return FALSE;
   }
@@ -627,30 +606,30 @@ skippy_hls_demux_load_initial_playlist (SkippyHLSDemux* demux)
 static void
 skippy_hls_demux_setup_playlist (SkippyHLSDemux * demux)
 {
-  SkippyM3U8 *variant = NULL;
+  gchar* variant;
 
   /* If this playlist is a variant playlist, select the first one
    * and update it */
   if (skippy_m3u8_client_has_variant_playlist (demux->client)) {
     // Select child playlist
     if (demux->connection_speed == 0) {
-      variant = skippy_m3u8_client_get_current_variant (demux->client);
+      variant = skippy_m3u8_client_get_current_playlist (demux->client);
     } else {
-      variant = skippy_m3u8_client_get_playlist_for_bitrate (demux->client,
-          demux->connection_speed);
+      variant = skippy_m3u8_client_get_playlist_for_bitrate (demux->client, demux->connection_speed);
     }
-    // Set the variant as current playlist to be used
-    skippy_m3u8_client_set_current (demux->client, variant);
-
     // Fetch the playlist
     if (!skippy_hls_demux_update_playlist (demux)) {
+      g_free (variant);
       return;
     }
+    // Set the variant as current playlist to be used
+    skippy_m3u8_client_set_current_playlist (demux->client, variant);
+    g_free (variant);
   }
 
   // Post duration message if non-live
   if (!skippy_m3u8_client_is_live (demux->client)) {
-    demux->duration = skippy_m3u8_client_get_duration (demux->client);
+    demux->duration = skippy_m3u8_client_get_total_duration (demux->client);
     GST_DEBUG_OBJECT (demux, "Playlist duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (demux->duration));
     if (demux->duration == GST_CLOCK_TIME_NONE) {
       GST_ERROR ("Duration has invalid value, not posting message to pipeline");
@@ -695,6 +674,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
   gboolean ret = FALSE;
   GstFormat fmt;
   gint64 stop = -1;
+  gchar* uri;
 
   if (query == NULL)
     return FALSE;
@@ -716,7 +696,9 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
       break;
     case GST_QUERY_URI:
       if (hlsdemux->client) {
-        gst_query_set_uri (query, skippy_m3u8_client_get_uri (hlsdemux->client));
+        uri = skippy_m3u8_client_get_uri (hlsdemux->client);
+        gst_query_set_uri (query, uri);
+        g_free (uri);
         ret = TRUE;
       }
       break;
@@ -1052,7 +1034,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // Check for live update of playlist
     skippy_hls_demux_check_for_live_update (demux);
     // Go to next fragment
-    skippy_m3u8_client_advance_fragment (demux->client);
+    skippy_m3u8_client_advance_to_next_fragment (demux->client);
     break;
   }
 
@@ -1072,12 +1054,12 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
 {
   GstStructure *stat_msg;
   guint64 size;
-  gboolean allow_cache = demux->caching_enabled;
   SkippyFragment* fragment;
+  gchar* uri;
 
   g_return_val_if_fail (*err == NULL, NULL);
 
-  fragment = skippy_m3u8_client_get_next_fragment (demux->client);
+  fragment = skippy_m3u8_client_get_current_fragment (demux->client);
   if (!fragment) {
     GST_INFO_OBJECT (demux, "This playlist doesn't contain more fragments");
     *fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
@@ -1088,14 +1070,17 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
       "Fetching next fragment %s (range=%" G_GINT64_FORMAT "-%" G_GINT64_FORMAT
       ")", fragment->uri, fragment->range_start, fragment->range_end);
 
+  uri = skippy_m3u8_client_get_uri (demux->client);
   *fetch_ret = skippy_uri_downloader_fetch_fragment (demux->downloader,
     fragment, // Media fragment to load
-    demux->client->main ? demux->client->main->uri : NULL, // Referrer
+    uri, // Referrer
     FALSE, // Compress (useless with coded media data)
     FALSE, // Refresh (don't wipe out cache)
-    demux->client->current ? demux->client->current->allowcache && allow_cache : allow_cache, // Allow caching directive
+    skippy_m3u8_client_allow_cache (demux->client) && demux->caching_enabled, // Allow caching directive
     err // Error
   );
+  g_free (uri);
+
   // NOTE: We don't want to handle the error here, we just pass it in and let it be handled by our caller
 
   // If it's not useable just return NULL
@@ -1117,8 +1102,10 @@ skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderF
     fragment->download_stop_time - fragment->download_start_time,
     size);
 
+#if 0
   /* try to switch to another bitrate if needed */
   skippy_hls_demux_switch_bitrate (demux, fragment);
+#endif
 
   GST_DEBUG ("Returning finished fragment");
 
@@ -1133,35 +1120,37 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
   GstStructure *stat_msg;
   GError* err;
   SkippyUriDownloaderFetchReturn fetch_ret;
+  gchar* playlist_uri;
+  gchar* current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
+
+  if (!current_playlist) {
+    return FALSE;
+  }
 
   // Create a download
-  download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client), NULL, NULL);
+  download = skippy_fragment_new (current_playlist, NULL, NULL);
   // Download it
+  playlist_uri = skippy_m3u8_client_get_uri (demux->client);
   fetch_ret = skippy_uri_downloader_fetch_fragment (demux->downloader,
     download, // Media fragment to load
-    demux->client->main ? demux->client->main->uri : NULL, // Referrer
+    playlist_uri, // Referrer
     TRUE, // Compress (good for playlists)
     TRUE, // Refresh (wipe out cached stuff)
-    demux->client->current ? demux->client->current->allowcache && demux->caching_enabled : demux->caching_enabled, // Allow caching directive
+    skippy_m3u8_client_allow_cache (demux->client) && demux->caching_enabled, // Allow caching directive
     &err // Error
   );
+  g_free (playlist_uri);
+  g_free (current_playlist);
   // Handle fetch result
   switch (fetch_ret) {
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
     skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_PLAYLIST, download->download_stop_time - download->download_start_time, 0);
     // Load M3U8 buffer into parser
-    if (!skippy_m3u8_client_load_playlist (demux->client, skippy_fragment_get_buffer (download))) {
+    if (!skippy_m3u8_client_load_playlist (demux->client, current_playlist, skippy_fragment_get_buffer (download))) {
       GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
       g_object_unref (download);
       return FALSE;
     }
-    // Sequence numbers across variants may differ, and we need to input our current position to reach
-    // the correct sequence number (we might have to re-issue a segment event as well
-    // if the current sequence number is too far ahead of a live stream)
-    // FIMXE: Validate this function doesn't mess up things (therefore we currently don't fully support variant playlists but that's OK)
-#if 0
-    skippy_m3u8_client_update_playlist_position (demux->client, demux->segment.position, &demux->need_segment);
-#endif
     g_object_unref (download);
     return TRUE;
   case SKIPPY_URI_DOWNLOADER_FAILED:
@@ -1221,6 +1210,7 @@ skippy_hls_demux_check_for_live_update (SkippyHLSDemux * demux)
   return TRUE;
 }
 
+#if 0
 static gboolean
 skippy_hls_demux_change_playlist (SkippyHLSDemux * demux, guint max_bitrate)
 {
@@ -1266,7 +1256,9 @@ skippy_hls_demux_change_playlist (SkippyHLSDemux * demux, guint max_bitrate)
 
   return TRUE;
 }
+#endif
 
+#if 0
 static gboolean
 skippy_hls_demux_switch_bitrate (SkippyHLSDemux * demux, SkippyFragment * fragment)
 {
@@ -1309,6 +1301,7 @@ skippy_hls_demux_switch_bitrate (SkippyHLSDemux * demux, SkippyFragment * fragme
 
   return skippy_hls_demux_change_playlist (demux, bitrate * demux->bitrate_limit);
 }
+#endif
 
 G_GNUC_INTERNAL
 void skippy_hlsdemux_setup (void)
