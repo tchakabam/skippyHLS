@@ -1,112 +1,89 @@
-/*
- * SkippyM3UParser.hpp
- *
- *  Created on: May 25, 2011
- *      Author: Stephan Hesse
- *
- */
-
 #pragma once
 
+#include <iostream>
 #include <string>
+#include <sstream>
+#include <unordered_map>
+#include <functional>
 #include <vector>
+#include <algorithm>
+#include <iterator>
+#include "skippy_m3uplaylist.h"
+#include <ratio>
+#include <iostream>
+#include "skippy_string_utils.h"
 
-// Child item info
-struct SkippyM3UItem
- {
-  std::string url, keyUri;
-  //size_t rangeStart, rangeEnd; // not supported yet
-  uint64_t index;
-  uint64_t start, end, duration; // Nanoseconds
-  uint8_t iv[16];
-  bool encrypted;
-};
+using std::string;
+using std::istringstream;
+using StringUtils::Tokens;
+using StringUtils::split;
 
-typedef std::vector<SkippyM3UItem> SkippyM3UPlaylistItems;
+using namespace std::placeholders;
+#define HANDLER(x) std::bind(&x, this, _1, _2, _3)
 
-struct SkippyM3UPlaylist
-{
-  SkippyM3UPlaylist(std::string uri)
-  :uri(uri)
-  {}
-
-  uint64_t version;
-  uint64_t programId;
-  uint64_t sequenceNo;
-  uint64_t bandwidthKbps; // kbps
-  uint64_t targetDuration, totalDuration; // Nanoseconds
-
-  std::string codec;
-  std::string resolution;
-  std::string uri;
-  std::string type;
-
-  SkippyM3UPlaylistItems items;
-};
-
-typedef std::vector<SkippyM3UPlaylist> SkippyM3UMasterPlaylistItems;
-
-struct SkippyM3UMasterPlaylist
-{
-  SkippyM3UMasterPlaylist(std::string uri)
-  :uri(uri)
-  {}
-
-  std::string uri;
-  SkippyM3UMasterPlaylistItems items;
-};
-
-class SkippyM3UParser
-{
+class SkippyM3UParser {
+    using handler_func = std::function<void(const string&, istringstream &, SkippyM3UPlaylist &)>;
+    std::unordered_map<string, handler_func> handlers;
 public:
-  enum State { STATE_META_LINE, STATE_URL_LINE, STATE_RESET};
+    SkippyM3UParser() {
+        handlers["#EXTINF"]               = HANDLER(SkippyM3UParser::onExtInf);
+        handlers["#EXT-X-ENDLIST"]        = HANDLER(SkippyM3UParser::onEnd);
+        handlers["#EXT-X-VERSION"]        = HANDLER(SkippyM3UParser::onVersion);
+        handlers["#EXT-X-PLAYLIST-TYPE"]  = HANDLER(SkippyM3UParser::onType);
+        handlers["#EXT-X-TARGETDURATION"] = HANDLER(SkippyM3UParser::onTargetDur);
+        handlers["#EXT-X-MEDIA-SEQUENCE"] = HANDLER(SkippyM3UParser::onMediaSeq);
+    }
 
-  enum SubState { SUBSTATE_STREAM,
-						  SUBSTATE_INF,
-              SUBSTATE_END,
-						  SUBSTATE_RESET,
-              };
-
-	SkippyM3UParser();
-
-	SkippyM3UPlaylist parse(std::string uri, const std::string& playlist);
-
-protected:
-  void readLine();
-  void evalState();
-  void evalSubstate();
-  void update(SkippyM3UPlaylist& playlist);
-  void metaTokenize();
-  bool nextToken();
-  uint64_t tokenToUnsignedInt();
+    SkippyM3UPlaylist parse(const string& uri, const string &playlist) {
+        SkippyM3UPlaylist list(uri);
+        istringstream iss(playlist);
+        string line;
+        while(getline(iss, line)) {
+            for(auto &tag : handlers) {
+                if (StringUtils::startsWith(line, tag.first))
+                    tag.second(line, iss, list);
+            }
+        }
+        return list;
+    }
 
 private:
-  // Parsing state
-  State state;
-  SubState subState;
+    void onExtInf(const string &line, istringstream &stream, SkippyM3UPlaylist &playlist) {
+        SkippyM3UItem item;
+        Tokens tok = split(line, ":,");
+        double duration = 0.0;
+        istringstream(tok[1]) >> duration;
 
-  uint64_t version;
-  uint64_t mediaSequenceNo;
-  uint64_t targetDuration;
-  std::string playlistType;
+        item.duration   = nanoseconds(static_cast<nanoseconds::rep>(duration * std::nano::den));
+        item.start      = playlist.totalDuration;
+        item.end        = item.start + item.duration;
 
-  // Line buffer
-  std::string line;
-  std::string token;
-  std::vector<std::string> tokens;
-  std::vector<std::string>::iterator tokenIt;
+        if (tok.size() > 2) 
+          item.comment = string(line.begin() + line.find(',') + 1, line.end());
 
-  // Stream sub-state vars
-  uint64_t programId;
-  uint64_t bandwidth;
-  std::string res;
-  std::string codec;
-
-  // Xinf sub-state vars
-  double length;
-  uint64_t index;
-  uint64_t position;
-
-  // URI state vars
-  std::string url;
+        getline(stream, item.url);
+        
+        playlist.addItem(item);
+    }
+    void onEnd(const string &line, istringstream &stream, SkippyM3UPlaylist &playlist) {
+        playlist.isComplete = true;
+    }
+    void onVersion(const string &line, istringstream &stream, SkippyM3UPlaylist &playlist) {
+        Tokens tok = split(line, ":");
+        istringstream(tok[1]) >> playlist.version;
+    }
+    void onType(const string &line, istringstream &stream, SkippyM3UPlaylist &playlist) {
+        Tokens tok = split(line, ":");
+        istringstream(tok[1]) >> playlist.type;
+    }
+    void onTargetDur(const string &line, istringstream &stream, SkippyM3UPlaylist &playlist) {
+        Tokens tok = split(line, ":");
+        double duration = 0.0;
+        istringstream(tok[1]) >> duration;
+        playlist.targetDuration = nanoseconds(static_cast<nanoseconds::rep>(duration * std::nano::den));
+    }
+    void onMediaSeq(const string &line, istringstream &stream, SkippyM3UPlaylist &playlist) {
+        Tokens tok = split(line, ":");
+        istringstream(tok[1]) >> playlist.sequenceNo;
+    }
 };
