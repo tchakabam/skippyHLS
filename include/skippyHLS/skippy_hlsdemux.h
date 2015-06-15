@@ -46,6 +46,9 @@ G_BEGIN_DECLS
 typedef struct _SkippyHLSDemux SkippyHLSDemux;
 typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
 
+#define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
+#define SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME "skippy-hlsdemux-download"
+
 /**
  * SkippyHLSDemux:
  *

@@ -1,5 +1,11 @@
 /* skippyHLS
  *
+ * Copyright (C) 2010 Marc-Andre Lureau <marcandre.lureau@gmail.com>
+ * Copyright (C) 2010 Andoni Morales Alastruey <ylatuya@gmail.com>
+ * Copyright (C) 2011, Hewlett-Packard Development Company, L.P.
+ *  Author: Youness Alaoui <youness.alaoui@collabora.co.uk>, Collabora Ltd.
+ *  Author: Sebastian Dröge <sebastian.droege@collabora.co.uk>, Collabora Ltd.
+ * Copyright (C) 2014 Sebastian Dröge <sebastian@centricular.com>
  * Copyright (C) 2015, SoundCloud Ltd. (http://soundcloud.com)
  *  Author: Stephan Hesse <stephan@soundcloud.com>, SoundCloud Ltd.
  *
@@ -197,6 +203,13 @@ skippy_uri_downloader_new (SkippyUriDownloaderCallback callback, GstElement* par
   return downloader;
 }
 
+GstElement* skippy_uri_downloader_get_parent (SkippyUriDownloader *downloader)
+{
+  g_return_val_if_fail (downloader, NULL);
+
+  return downloader->priv->parent_element;
+}
+
 static void
 skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
 {
@@ -208,11 +221,13 @@ skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
     skippy_fragment_complete (downloader->priv->download, (struct SkippyUriDownloader *) downloader);
     // FIXME: seems when data comes from filesystem caches we can get less data than the segment advertises (encryption padding?)
     // Make sure we send a 100% callback and have a valid byte number
-    downloader->priv->bytes_loaded = downloader->priv->bytes_total;
-    downloader->priv->callback (downloader,
-      downloader->priv->download->start_time, downloader->priv->download->stop_time,
-      downloader->priv->bytes_loaded, downloader->priv->bytes_total
-    );
+    if (downloader->priv->bytes_loaded != downloader->priv->bytes_total) {
+      downloader->priv->bytes_loaded = downloader->priv->bytes_total;
+      downloader->priv->callback (downloader,
+        downloader->priv->download->start_time, downloader->priv->download->stop_time,
+        downloader->priv->bytes_loaded, downloader->priv->bytes_total
+      );
+    }
     GST_DEBUG_OBJECT (downloader, "Signaling chain funtion");
     g_cond_signal (&downloader->priv->cond);
   }

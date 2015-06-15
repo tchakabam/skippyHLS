@@ -1,5 +1,11 @@
 /* skippyHLS
  *
+ * Copyright (C) 2010 Marc-Andre Lureau <marcandre.lureau@gmail.com>
+ * Copyright (C) 2010 Andoni Morales Alastruey <ylatuya@gmail.com>
+ * Copyright (C) 2011, Hewlett-Packard Development Company, L.P.
+ *  Author: Youness Alaoui <youness.alaoui@collabora.co.uk>, Collabora Ltd.
+ *  Author: Sebastian Dröge <sebastian.droege@collabora.co.uk>, Collabora Ltd.
+ * Copyright (C) 2014 Sebastian Dröge <sebastian@centricular.com>
  * Copyright (C) 2015, SoundCloud Ltd. (http://soundcloud.com)
  *  Author: Stephan Hesse <stephan@soundcloud.com>, SoundCloud Ltd.
  *
@@ -222,6 +228,7 @@ skippy_fragment_add_buffer (SkippyFragment * fragment, GstBuffer * buffer)
   }
 
   GST_DEBUG ("Adding new buffer to the fragment");
+
   /* We steal the buffers you pass in */
   if (fragment->priv->buffer == NULL)
     fragment->priv->buffer = buffer;
