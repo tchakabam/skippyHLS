@@ -948,18 +948,19 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
         GST_ERROR ("Position query result is not in TIME format");
         query_ret = FALSE;
       }
-      GST_LOG ("Current position query result: %lld ms", (long long int) pos / 1000000);
+      GST_TRACE ("Current position query result: %lld ms", (long long int) pos / 1000000);
     }
     gst_query_unref (query);
     if (!query_ret) {
-      GST_WARNING ("Position query did not give proper result!");
+      GST_TRACE ("Position query did not give proper result");
       // We assume this can happen at the very beginning of the streaming session
       // when pipeline position has some undefined state (as observed)
-      pos = 0;
+      // In this case we just continue downloading ...
+      return TRUE;
     }
     GST_DEBUG ("Buffer ahead duration is %d seconds", (int) demux->buffer_ahead_duration_secs);
     if (!demux->seeked && demux->segment.position >= pos + demux->buffer_ahead_duration_secs * GST_SECOND) {
-      GST_LOG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)",
+      GST_DEBUG ("Blocking task as we have buffered enough until now (up to %f seconds of media position)",
         ((float) demux->segment.position) / GST_SECOND);
       g_usleep (POLL_PERIOD);
       return FALSE;
