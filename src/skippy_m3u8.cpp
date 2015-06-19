@@ -110,7 +110,7 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
 
   item = client->priv->playlist.items.at (client->priv->current_index);
 
-  fragment = skippy_fragment_new (item.url.c_str(), NULL, NULL);
+  fragment = skippy_fragment_new (item.url.c_str());
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
   fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
   fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
@@ -199,7 +199,7 @@ gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client)
   return FALSE;
 }
 
-gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client)
+gboolean skippy_m3u8_client_is_caching_allowed(SkippyM3U8Client * client)
 {
   //lock_guard<recursive_mutex> lock(client->priv->mutex);
   return TRUE;

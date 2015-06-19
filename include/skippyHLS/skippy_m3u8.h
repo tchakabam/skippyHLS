@@ -60,6 +60,6 @@ GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);
 
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client);
-gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client);
+gboolean skippy_m3u8_client_is_caching_allowed(SkippyM3U8Client * client);
 
 G_END_DECLS
