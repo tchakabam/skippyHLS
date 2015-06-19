@@ -45,7 +45,7 @@
 
 #include <skippyHLS/skippy_hlsdemux.h>
 
-static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src",
+static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
@@ -775,7 +775,7 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux, GstCaps * newcaps)
   // Create and activate new source pad (linked as a ghost pad to our queue source pad)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
-  demux->srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
+  demux->srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
   gst_object_unref (templ);
   gst_object_unref (queue_srcpad);
 
