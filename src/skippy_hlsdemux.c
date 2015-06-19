@@ -1,5 +1,11 @@
 /* skippyHLS
  *
+ * Copyright (C) 2010 Marc-Andre Lureau <marcandre.lureau@gmail.com>
+ * Copyright (C) 2010 Andoni Morales Alastruey <ylatuya@gmail.com>
+ * Copyright (C) 2011, Hewlett-Packard Development Company, L.P.
+ *  Author: Youness Alaoui <youness.alaoui@collabora.co.uk>, Collabora Ltd.
+ *  Author: Sebastian Dröge <sebastian.droege@collabora.co.uk>, Collabora Ltd.
+ * Copyright (C) 2014 Sebastian Dröge <sebastian@centricular.com>
  * Copyright (C) 2015, SoundCloud Ltd. (http://soundcloud.com)
  *  Author: Stephan Hesse <stephan@soundcloud.com>, SoundCloud Ltd.
  *
@@ -39,7 +45,7 @@
 
 #include <skippyHLS/skippy_hlsdemux.h>
 
-static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src",
+static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
@@ -93,8 +99,9 @@ static gboolean skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, Gs
 static gboolean skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event);
 static void skippy_hls_demux_stream_loop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_stop (SkippyHLSDemux * demux);
-static void skippy_hls_demux_pause (SkippyHLSDemux * demux);
-static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
+static void skippy_hls_demux_pause_tasks (SkippyHLSDemux * demux);
+static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
+static gboolean skippy_hls_demux_update_playlist (SkippyHLSDemux * demux);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux, gboolean dispose);
 static void skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 
@@ -200,6 +207,8 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
 
   GST_DEBUG_CATEGORY_INIT (skippy_hls_demux_debug, "skippyhlsdemux", 0,
       "Skippy HLS client");
+
+  skippy_m3u8_client_init ();
 }
 
 static void
@@ -444,10 +453,8 @@ skippy_hls_demux_query_position (SkippyHLSDemux * demux)
   gst_query_unref (query);
 
   if (!query_ret) {
-    GST_DEBUG ("Assuming from position query result that playback did not start yet");
-    // We assume this can happen at the very beginning of the streaming session
-    // when pipeline position has some undefined state (as observed)
-    pos = 0;
+    // If we didn't get a proper position we could be anywhere in the stream and should assume it's max int in order to keep re-buffering working
+    pos = G_MAXINT64;
   }
   return pos;
 }
@@ -655,6 +662,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
   gboolean ret = FALSE;
   GstFormat fmt;
   gint64 stop = -1;
+  gchar* uri;
 
   GST_DEBUG ("Got %" GST_PTR_FORMAT, query);
 
@@ -770,7 +778,7 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   // Link queue -> ext src (ghost pad)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
-  demux->srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
+  demux->srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
   gst_object_unref (templ);
   gst_object_unref (queue_srcpad);
 
@@ -935,7 +943,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     demux->position = fragment->start_time;
     demux->download_failed_count = 0;
     // Go to next fragment
-    skippy_m3u8_client_advance_fragment (demux->client);
+    skippy_m3u8_client_advance_to_next_fragment (demux->client);
     break;
   }
 
@@ -958,6 +966,10 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   SkippyUriDownloaderFetchReturn fetch_ret;
   gboolean ret = FALSE;
 
+  if (!current_playlist) {
+    return FALSE;
+  }
+
   // Create a download
   download = skippy_fragment_new (skippy_m3u8_client_get_current_uri (demux->client));
   download->start_time = 0;
@@ -971,6 +983,8 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     skippy_hls_demux_is_caching_allowed (demux), // Allow caching directive
     &err // Error
   );
+  g_free (playlist_uri);
+  g_free (current_playlist);
   // Handle fetch result
   switch (fetch_ret) {
   case SKIPPY_URI_DOWNLOADER_COMPLETED:

@@ -48,12 +48,11 @@ struct _SkippyFragment
   gint64 range_start, range_end; /* Byte range @ URI */
   gboolean completed;            /* Whether the fragment is complete or not */
   gboolean cancelled;            /* Wether the fragment download was cancelled */
-  GstClockTime download_start_time;   /* Epoch time when the download started */
-  GstClockTime download_stop_time;    /* Epoch time when the download finished */
-  GstClockTime start_time;            /* Media start time of the fragment */
-  GstClockTime stop_time;             /* Media stop time of the fragment */
-  GstClockTime duration;              /* Media fragment duration */
-  gboolean index;                /* Index of the fragment */
+  guint64 download_start_time;   /* Epoch time when the download started */
+  guint64 download_stop_time;    /* Epoch time when the download finished */
+  guint64 start_time;            /* Media start time of the fragment */
+  guint64 stop_time;             /* Media stop time of the fragment */
+  guint64 duration;              /* Media fragment duration */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
   gsize size;
 };
