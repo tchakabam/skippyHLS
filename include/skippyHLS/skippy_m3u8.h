@@ -35,10 +35,7 @@ typedef struct _SkippyM3U8Client
   struct SkippyM3U8ClientPrivate* priv;
 } SkippyM3U8Client;
 
-// Initialize global debug log category (call only once)
-void skippy_m3u8_client_init ();
-
-SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri);
+SkippyM3U8Client *skippy_m3u8_client_new ();
 void skippy_m3u8_client_free (SkippyM3U8Client * client);
 
 // Called to get the next fragment

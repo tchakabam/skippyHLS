@@ -70,18 +70,11 @@ struct _SkippyHLSDemux
   SkippyUriDownloader *playlist_downloader;
   SkippyM3U8Client *client;     /* M3U8 client */
 
-  /* Properties */
-  guint buffer_ahead_duration_secs;
-  gfloat bitrate_limit;         /* limit of the available bitrate to use */
-  guint connection_speed;       /* Network connection speed in kbps (0 = unknown) */
-  gboolean caching_enabled;		/* Enable/disable caching */
-
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
 
   /* Internal state */
-  GstClockTime duration;
   GstClockTime position;
   gint download_failed_count;
   gboolean seeked;
