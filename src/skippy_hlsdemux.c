@@ -264,6 +264,7 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   GST_DEBUG ("Pausing task ...");
   // Signal the thread in case it's waiting
   GST_OBJECT_LOCK (demux);
+  demux->seeked = TRUE;
   GST_TASK_SIGNAL (demux->stream_task);
   GST_OBJECT_UNLOCK (demux);
   // Pause the task
@@ -337,12 +338,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
   }
 
-  // Once we have done our stuff we can call the parent handler
-  GST_TRACE ("Calling parent class state change handler ...");
-  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
-  GST_TRACE ("State transition result: %s", gst_element_state_change_return_get_name (ret));
-
-  return ret;
+  return GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
 }
 
 // Posts HLS statistics messages on the element bus
@@ -478,7 +474,7 @@ skippy_hls_demux_update_duration (SkippyHLSDemux * demux)
 static void
 skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 {
-  gchar* uri;
+  gchar* uri = NULL;
 
   // Sending stats message about first playlist fetch
   skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, gst_util_get_timestamp (), 0);
@@ -487,7 +483,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   uri = skippy_hls_demux_query_location (demux);
   if (!uri) {
     GST_ELEMENT_ERROR (demux, RESOURCE, NOT_FOUND, ("Failed querying the playlist URI"), (NULL));
-    return;
+    goto error;
   }
   GST_INFO_OBJECT (demux, "M3U8 location: %s", uri);
 
@@ -509,7 +505,6 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   skippy_uri_downloader_prepare (demux->downloader, uri);
   skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
 
-  // Link pads
   skippy_hls_demux_link_pads (demux);
 
 error:
@@ -538,13 +533,10 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   }
   gst_pad_link (downloader_srcpad, demux->queue_sinkpad);
   gst_object_unref (downloader_srcpad);
-
   GST_TRACE ("Linked downloader to queue");
-
   // Link queue -> ext src (ghost pad)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
-
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
   srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
   GST_OBJECT_LOCK (demux);
@@ -553,24 +545,19 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   // Cleanup
   gst_object_unref (templ);
   gst_object_unref (queue_srcpad);
-
   // Configure external source pad
   gst_pad_set_active (demux->srcpad, TRUE);
   gst_pad_set_event_function (demux->srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_event));
   gst_pad_set_query_function (demux->srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_query));
-
   // Add pad to element
   gst_element_add_pad (GST_ELEMENT (demux), demux->srcpad);
   gst_element_no_more_pads (GST_ELEMENT (demux));
-
   GST_DEBUG ("Added src pad");
-
   // Sending stream start event that we got on sink pad (sticky event)
   stream_id = gst_pad_create_stream_id (demux->srcpad, GST_ELEMENT_CAST (demux), NULL);
   event = gst_pad_get_sticky_event (demux->sinkpad, GST_EVENT_STREAM_START, 0);
-
   GST_OBJECT_LOCK (demux);
   if (event) {
     // Do we have a group ID from the sink pad sticky event?
@@ -591,15 +578,11 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
     gst_event_set_group_id (event, demux->group_id);
   }
   GST_OBJECT_UNLOCK (demux);
-
   GST_DEBUG ("Done linking pads, sending stream start event");
-
   // Send the stream start event
   gst_pad_send_event (demux->queue_sinkpad, event);
-
-  GST_DEBUG ("Sent stream start event");
-
   g_free (stream_id);
+  GST_DEBUG ("Sent stream start event");
 }
 
 /* Handling data from the sink pad
@@ -733,13 +716,6 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   segment = skippy_uri_downloader_get_segment (demux->downloader);
   gst_segment_do_seek (&segment, rate, format, flags, start_type, start, stop_type, stop, NULL);
   skippy_uri_downloader_set_segment (demux->downloader, segment);
-
-  GST_TRACE ("Setting seeked flag");
-
-  GST_OBJECT_LOCK (demux);
-  // Set seeked flag
-  demux->seeked = TRUE;
-  GST_OBJECT_UNLOCK (demux);
 
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
@@ -876,15 +852,14 @@ skippy_hls_stream_loop_wait (SkippyHLSDemux * demux, GstClockTime max_wait)
 {
   // Monotonic time in GLib is in useconds
   gint64 max_wait_ms = ( ( (gint64) max_wait) / GST_USECOND );
-
-  while (TRUE) {
+  while (!demux->seeked) {
     if (!g_cond_wait_until(GST_TASK_GET_COND (demux->stream_task),
       GST_OBJECT_GET_LOCK (demux), g_get_monotonic_time () + max_wait_ms)) {
       GST_TRACE ("Cond-wait timed out");
+      break;
     }
-    GST_TRACE ("Continuing stream task");
-    break;
   }
+  GST_TRACE ("Continuing stream task now");
 }
 
 // Checks wether we should download another segment with respect to buffer size.
@@ -924,7 +899,6 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     max_wait = demux->position - pos - max_buffer_duration;
     GST_TRACE ("Blocking task as we have buffered enough until now (up to %" GST_TIME_FORMAT " of media position) for maximum time of %" GST_TIME_FORMAT,
       GST_TIME_ARGS (demux->position), GST_TIME_ARGS(max_wait));
-    // Unlocks the object
     skippy_hls_stream_loop_wait (demux, max_wait);
     GST_OBJECT_UNLOCK (demux);
     return FALSE;

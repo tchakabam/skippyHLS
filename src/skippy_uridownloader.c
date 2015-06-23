@@ -67,7 +67,7 @@ struct _SkippyUriDownloaderPrivate
 
 static GstStaticPadTemplate srcpadtemplate = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
-    GST_PAD_SOMETIMES,
+    GST_PAD_ALWAYS,
     GST_STATIC_CAPS_ANY);
 
 static void skippy_uri_downloader_finalize (GObject * object);
@@ -113,10 +113,13 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   downloader->priv->urisrc = NULL;
   downloader->priv->buffer = NULL;
   downloader->priv->bus = NULL;
+
+  // Element state flags
   downloader->priv->fetching = FALSE;
-  downloader->priv->typefind = gst_element_factory_make ("typefind", NULL);
+  downloader->priv->set_uri = FALSE;
 
   // Add typefind
+  downloader->priv->typefind = gst_element_factory_make ("typefind", NULL);
   gst_bin_add (GST_BIN(downloader), GST_ELEMENT (downloader->priv->typefind));
   typefindsrcpad = gst_element_get_static_pad (downloader->priv->typefind, "src");
   // Add external source pad as ghost pad to typefind src pad
@@ -155,10 +158,10 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
 
   g_mutex_lock (&downloader->priv->download_lock);
 
+  // Per download state
   downloader->priv->bytes_loaded = 0;
   downloader->priv->bytes_total = 0;
   downloader->priv->discont = FALSE;
-  downloader->priv->set_uri = FALSE;
 
   // Clear error when present
   g_clear_error (&downloader->priv->err);
@@ -770,8 +773,6 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   skippy_uri_downloader_deinit_uri_src  (downloader);
   // After this we are sure the streaming thread of the data source will not push any more data or events
   // and all messages from the URI src element are flushed (in sync with this call)
-
-  GST_DEBUG ("Done fetching");
 
   // Handle errors
   if (downloader->priv->err) {
