@@ -64,6 +64,5 @@ struct _SkippyFragmentClass
 
 GType skippy_fragment_get_type (void);
 SkippyFragment * skippy_fragment_new (const gchar* uri);
-void skippy_fragment_set_completed (SkippyFragment * fragment);
 
 G_END_DECLS

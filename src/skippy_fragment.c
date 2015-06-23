@@ -101,13 +101,3 @@ skippy_fragment_dispose (GObject * object)
 
   GST_TRACE ("Done disposing.");
 }
-
-void
-skippy_fragment_set_completed (SkippyFragment * fragment)
-{
-  g_return_if_fail (fragment != NULL);
-
-  GST_LOG ("Fragment set completed");
-  fragment->completed = TRUE;
-  fragment->download_stop_time = gst_util_get_timestamp ();
-}

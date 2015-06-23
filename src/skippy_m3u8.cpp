@@ -120,7 +120,7 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
   fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
   fragment->discontinuous = TRUE;
-  return fragment;
+  return (SkippyFragment*) g_object_ref(fragment);
 }
 
 void skippy_m3u8_client_advance_to_next_fragment (SkippyM3U8Client * client)
