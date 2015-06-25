@@ -26,24 +26,14 @@
  * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  */
-/**
- * SECTION:element-hlsdemux
- *
- * HTTP Live Streaming demuxer element.
- *
- * <refsect2>
- * <title>Example launch line</title>
- * |[
- * gst-launch souphttpsrc location=http://devimages.apple.com/iphone/samples/bipbop/gear4/prog_index.m3u8 ! hlsdemux ! decodebin2 ! videoconvert ! videoscale ! autovideosink
- * ]|
- * </refsect2>
- *
- * Last reviewed on 2010-10-07
- */
 
 #include <string.h>
+#include <math.h>
 
 #include <skippyHLS/skippy_hlsdemux.h>
+
+#define RETRY_TIME_BASE (500*GST_MSECOND)
+#define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
@@ -218,7 +208,7 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
   // Reset all our state fields
   demux->position = 0;
   demux->download_failed_count = 0;
-  demux->seeked = FALSE;
+  demux->continuing = FALSE;
   demux->have_group_id = FALSE;
   demux->group_id = G_MAXUINT;
 
@@ -264,7 +254,7 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   GST_DEBUG ("Pausing task ...");
   // Signal the thread in case it's waiting
   GST_OBJECT_LOCK (demux);
-  demux->seeked = TRUE;
+  demux->continuing = TRUE;
   GST_TASK_SIGNAL (demux->stream_task);
   GST_OBJECT_UNLOCK (demux);
   // Pause the task
@@ -477,7 +467,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   gchar* uri = NULL;
 
   // Sending stats message about first playlist fetch
-  skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, gst_util_get_timestamp (), 0);
+  skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, (guint64) gst_util_get_timestamp (), 0);
 
   // Query the playlist URI
   uri = skippy_hls_demux_query_location (demux);
@@ -852,7 +842,7 @@ skippy_hls_stream_loop_wait (SkippyHLSDemux * demux, GstClockTime max_wait)
 {
   // Monotonic time in GLib is in useconds
   gint64 max_wait_ms = ( ( (gint64) max_wait) / GST_USECOND );
-  while (!demux->seeked) {
+  while (!demux->continuing) {
     if (!g_cond_wait_until(GST_TASK_GET_COND (demux->stream_task),
       GST_OBJECT_GET_LOCK (demux), g_get_monotonic_time () + max_wait_ms)) {
       GST_TRACE ("Cond-wait timed out");
@@ -894,7 +884,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
   // Otherwise check for wether we should limit downloading
   GST_OBJECT_LOCK (demux);
   // Check upfront position relative to stream position
-  if (!demux->seeked && demux->position > pos + max_buffer_duration) {
+  if (!demux->continuing && demux->position > pos + max_buffer_duration) {
     // Diff' between current playhead and buffer-head in microseconds
     max_wait = demux->position - pos - max_buffer_duration;
     GST_TRACE ("Blocking task as we have buffered enough until now (up to %" GST_TIME_FORMAT " of media position) for maximum time of %" GST_TIME_FORMAT,
@@ -903,8 +893,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     GST_OBJECT_UNLOCK (demux);
     return FALSE;
   }
-  // Once we have seeked we would end up here
-  demux->seeked = FALSE;
+  demux->continuing = FALSE;
   GST_OBJECT_UNLOCK (demux);
   // Continue downloading
   return TRUE;
@@ -985,6 +974,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GError *err = NULL;
   guint queue_level;
   gchar* referrer_uri = NULL;
+  GstClockTime retry_timer = RETRY_TIME_BASE;
 
   GST_DEBUG_OBJECT (demux, "Entering stream task");
 
@@ -1040,8 +1030,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // Actual download failure
     GST_OBJECT_LOCK (demux);
     demux->download_failed_count++;
-    GST_OBJECT_UNLOCK (demux);
     GST_DEBUG ("Failed to fetch fragment for %d times.", demux->download_failed_count);
+    GST_OBJECT_UNLOCK (demux);
     // We only want to refetch the playlist if we get a 403 or a 404
     if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
       GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
@@ -1067,11 +1057,22 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
   // Handle error
   // TODO: Make this an exponential backoff cond' wait-until
+  GST_OBJECT_LOCK (demux);
   if (err) {
-    GST_OBJECT_LOCK (demux);
-    skippy_hls_stream_loop_wait (demux, 1 * GST_SECOND);
-    GST_OBJECT_UNLOCK (demux);
+    if (demux->download_failed_count >= RETRY_THRESHOLD) {
+      //
+      // Use this JavaScript function in a console to test the series of ouputs with a 500 ms basetime or to tune the setting here
+      // backoff = function(fails, threshold) { if (fails >= threshold) { return 500 * Math.exp (fails/6) / Math.E } else { return 500; } }
+      // Below is the same algorithm
+      double power = ((double) demux->download_failed_count) / ((double) RETRY_THRESHOLD);
+      retry_timer = RETRY_TIME_BASE * (exp ( power ) / M_E);
+    }
+    skippy_hls_stream_loop_wait (demux, retry_timer);
+    // If there was an error we should not schedule against buffer fill amount
+    // but retry right away
+    demux->continuing = TRUE;
   }
+  GST_OBJECT_UNLOCK (demux);
 
   // Unref current fragment
   if (fragment) {

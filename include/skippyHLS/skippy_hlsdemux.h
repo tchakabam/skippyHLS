@@ -77,7 +77,7 @@ struct _SkippyHLSDemux
   /* Internal state */
   GstClockTime position;
   gint download_failed_count;
-  gboolean seeked;
+  gboolean continuing;
 
   // Group ID
   gboolean have_group_id;
