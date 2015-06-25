@@ -34,6 +34,7 @@
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
 #define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
+#define RETRY_MAX_TIME_UNTIL (60*GST_SECOND)
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
@@ -269,6 +270,21 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   GST_DEBUG ("Paused streaming task");
 }
 
+static void
+skippy_hls_demux_restart (SkippyHLSDemux * demux)
+{
+  GST_OBJECT_LOCK (demux);
+  if (demux->download_failed_count >= RETRY_THRESHOLD) {
+    GST_OBJECT_UNLOCK (demux);
+    skippy_hls_demux_pause (demux);
+    // At this point the stream loop is paused
+    demux->download_failed_count = 0;
+    gst_task_start (demux->stream_task);
+    return;
+  }
+  GST_OBJECT_UNLOCK (demux);
+}
+
 // Called for state change from READY -> NULL
 // This will stop & join the task (given it's not stopped yet) in a blocking way
 // Which means the function will block until the task is stopped i.e streaming thread is joined.
@@ -313,6 +329,9 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
     // Start streaming thread
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       gst_task_start (demux->stream_task);
+      break;
+    case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
+      skippy_hls_demux_restart (demux);
       break;
     // Interrupt streaming thread
     case GST_STATE_CHANGE_PAUSED_TO_READY:
@@ -835,70 +854,6 @@ skippy_hls_check_get_max_buffer_duration (SkippyHLSDemux * demux)
   return res;
 }
 
-// Waits for task condition with timeout - Unlocks the GST object mutex, expects it to be locked
-// @param max_wait Max time this should wait in Gstreamer clock time units
-static void
-skippy_hls_stream_loop_wait (SkippyHLSDemux * demux, GstClockTime max_wait)
-{
-  // Monotonic time in GLib is in useconds
-  gint64 max_wait_ms = ( ( (gint64) max_wait) / GST_USECOND );
-  while (!demux->continuing) {
-    if (!g_cond_wait_until(GST_TASK_GET_COND (demux->stream_task),
-      GST_OBJECT_GET_LOCK (demux), g_get_monotonic_time () + max_wait_ms)) {
-      GST_TRACE ("Cond-wait timed out");
-      break;
-    }
-  }
-  GST_TRACE ("Continuing stream task now");
-}
-
-// Checks wether we should download another segment with respect to buffer size.
-// Only runs in the streaming thread.
-//
-// MT-safe
-static gboolean
-skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
-{
-  GstClockTime pos, max_buffer_duration, max_wait;
-
-  // Check if we are linked yet (did we receive a proper playlist?)
-  GST_OBJECT_LOCK (demux);
-  if (!demux->srcpad) {
-    GST_OBJECT_UNLOCK (demux);
-    GST_TRACE ("No src pad yet");
-    return FALSE;
-  }
-  GST_OBJECT_UNLOCK (demux);
-
-  // Get current playback position from downstream
-  pos = (GstClockTime) skippy_hls_demux_query_position (demux);
-  max_buffer_duration = skippy_hls_check_get_max_buffer_duration (demux);
-  // If we have no valid max buffer duration, don't restrict
-  if (max_buffer_duration == GST_CLOCK_TIME_NONE) {
-    return TRUE;
-  }
-
-  GST_TRACE ("Max buffer duration is %" GST_TIME_FORMAT, GST_TIME_ARGS(max_buffer_duration));
-  GST_TRACE ("Currently queued stream position is %" GST_TIME_FORMAT, GST_TIME_ARGS(demux->position));
-
-  // Otherwise check for wether we should limit downloading
-  GST_OBJECT_LOCK (demux);
-  // Check upfront position relative to stream position
-  if (!demux->continuing && demux->position > pos + max_buffer_duration) {
-    // Diff' between current playhead and buffer-head in microseconds
-    max_wait = demux->position - pos - max_buffer_duration;
-    GST_TRACE ("Blocking task as we have buffered enough until now (up to %" GST_TIME_FORMAT " of media position) for maximum time of %" GST_TIME_FORMAT,
-      GST_TIME_ARGS (demux->position), GST_TIME_ARGS(max_wait));
-    skippy_hls_stream_loop_wait (demux, max_wait);
-    GST_OBJECT_UNLOCK (demux);
-    return FALSE;
-  }
-  demux->continuing = FALSE;
-  GST_OBJECT_UNLOCK (demux);
-  // Continue downloading
-  return TRUE;
-}
-
 // Refreshes playlist - only called from streaming thread
 //
 // MT-safe
@@ -962,6 +917,81 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   return ret;
 }
 
+static GstClockTime
+skippy_hls_demux_get_time_until_retry (SkippyHLSDemux * demux)
+{
+  double power;
+  double retry_timer = RETRY_TIME_BASE;
+
+  if (demux->download_failed_count >= RETRY_THRESHOLD) {
+    //
+    // Use this JavaScript function in a console to test the series of ouputs with a 500 ms basetime or to tune the setting here
+    // backoff = function(fails, threshold) { if (fails >= threshold) { return 500 * Math.exp (fails/6) / Math.E } else { return 500; } }
+    // Below is the same algorithm
+    power = ((double) demux->download_failed_count) / ((double) RETRY_THRESHOLD);
+    retry_timer = RETRY_TIME_BASE * (exp ( power ) / M_E);
+    // Cap the value
+    if (retry_timer > RETRY_MAX_TIME_UNTIL) {retry_timer = RETRY_MAX_TIME_UNTIL;}
+  }
+
+  return (GstClockTime) retry_timer;
+}
+
+// Waits for task condition with timeout - Unlocks the GST object mutex, expects it to be locked
+// @param max_wait Max time this should wait in Gstreamer clock time units
+static void
+skippy_hls_stream_loop_wait_locked (SkippyHLSDemux * demux, GstClockTime max_wait)
+{
+  // Monotonic time in GLib is in useconds
+  gint64 max_wait_ms = ( ( (gint64) max_wait) / GST_USECOND );
+  while (!demux->continuing) {
+    if (!g_cond_wait_until(GST_TASK_GET_COND (demux->stream_task),
+      GST_OBJECT_GET_LOCK (demux), g_get_monotonic_time () + max_wait_ms)) {
+      GST_TRACE ("Cond-wait timed out");
+      break;
+    }
+  }
+  GST_TRACE ("Continuing stream task now");
+}
+
+// Checks wether we should download another segment with respect to buffer size.
+// Only runs in the streaming thread.
+//
+// MT-safe
+static gboolean
+skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
+{
+  GstClockTime pos, max_buffer_duration, max_wait;
+
+  // Check if we are linked yet (did we receive a proper playlist?)
+  GST_OBJECT_LOCK (demux);
+  if (!demux->srcpad) {
+    GST_OBJECT_UNLOCK (demux);
+    GST_TRACE ("No src pad yet");
+    return FALSE;
+  }
+  GST_OBJECT_UNLOCK (demux);
+
+  // Otherwise check for wether we should limit downloading
+  GST_OBJECT_LOCK (demux);
+  // Check upfront position relative to stream position
+  if (!demux->continuing && demux->position > pos + max_buffer_duration) {
+    // Diff' between current playhead and buffer-head in microseconds
+    max_wait = demux->position - pos - max_buffer_duration;
+    GST_TRACE ("Blocking task as we have buffered enough until now (up to %" GST_TIME_FORMAT " of media position) for maximum time of %" GST_TIME_FORMAT,
+      GST_TIME_ARGS (demux->position), GST_TIME_ARGS(max_wait));
+    skippy_hls_stream_loop_wait_locked (demux, max_wait);
+    GST_OBJECT_UNLOCK (demux);
+    return FALSE;
+  }
+  // Make sure we definitely halt at the next possible scheduling step again now
+  // (like maybe after an error or check the buffer fill for the next download)
+  demux->continuing = FALSE;
+  GST_OBJECT_UNLOCK (demux);
+  // Continue downloading
+  return TRUE;
+}
+
 // Streaming task function - implements all the HLS logic.
 // When this runs the streaming task mutex is/must be locked.
 //
@@ -974,7 +1004,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GError *err = NULL;
   guint queue_level;
   gchar* referrer_uri = NULL;
-  GstClockTime retry_timer = RETRY_TIME_BASE;
+
 
   GST_DEBUG_OBJECT (demux, "Entering stream task");
 
@@ -983,6 +1013,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GST_TRACE ("Current internal queue level: %d buffers", (int) queue_level);
 
   // Check current playback position against buffer levels
+  // Blocks and schedules timed-cond until next download
+  // Might be interrupted by a seek event and continue
   if (!skippy_hls_check_buffer_ahead (demux)) {
     return;
   }
@@ -1056,18 +1088,12 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GST_DEBUG_OBJECT (demux, "Exiting task now ...");
 
   // Handle error
-  // TODO: Make this an exponential backoff cond' wait-until
   GST_OBJECT_LOCK (demux);
   if (err) {
-    if (demux->download_failed_count >= RETRY_THRESHOLD) {
-      //
-      // Use this JavaScript function in a console to test the series of ouputs with a 500 ms basetime or to tune the setting here
-      // backoff = function(fails, threshold) { if (fails >= threshold) { return 500 * Math.exp (fails/6) / Math.E } else { return 500; } }
-      // Below is the same algorithm
-      double power = ((double) demux->download_failed_count) / ((double) RETRY_THRESHOLD);
-      retry_timer = RETRY_TIME_BASE * (exp ( power ) / M_E);
-    }
-    skippy_hls_stream_loop_wait (demux, retry_timer);
+    GstClockTime time_until_retry = skippy_hls_demux_get_time_until_retry (demux);
+    GST_DEBUG ("Next retry scheduled in: %" GST_TIME_FORMAT, GST_TIME_ARGS (time_until_retry));
+    // Waits before retrying - might be interrupted by a PAUSED -> PLAYING transition or by a seek event
+    skippy_hls_stream_loop_wait_locked (demux, time_until_retry);
     // If there was an error we should not schedule against buffer fill amount
     // but retry right away
     demux->continuing = TRUE;
