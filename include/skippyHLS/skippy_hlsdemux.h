@@ -78,10 +78,6 @@ struct _SkippyHLSDemux
   GstClockTime position;
   gint download_failed_count;
   gboolean continuing;
-
-  // Group ID
-  gboolean have_group_id;
-  guint group_id;
 };
 
 struct _SkippyHLSDemuxClass
