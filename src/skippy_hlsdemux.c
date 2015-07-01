@@ -1140,7 +1140,6 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
     skippy_m3u8_client_allow_cache (demux->client) && demux->caching_enabled, // Allow caching directive
     &err // Error
   );
-  g_free (playlist_uri);
   // Handle fetch result
   switch (fetch_ret) {
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
@@ -1148,13 +1147,9 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
     // Load M3U8 buffer into parser
     if (!skippy_m3u8_client_load_playlist (demux->client, current_playlist, skippy_fragment_get_buffer (download))) {
       GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
-      g_object_unref (download);
-      g_free (current_playlist);
-      return FALSE;
+      goto error;
     }
-    g_object_unref (download);
-    g_free (current_playlist);
-    return TRUE;
+    goto success;
   case SKIPPY_URI_DOWNLOADER_FAILED:
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
   case SKIPPY_URI_DOWNLOADER_VOID:
@@ -1162,13 +1157,18 @@ skippy_hls_demux_update_playlist (SkippyHLSDemux * demux)
       GST_ERROR ("Error updating playlist: %s", err->message);
       g_clear_error (&err);
     }
+    goto error;
+  }
+success:
     g_object_unref (download);
+    g_free (playlist_uri);
+    g_free (current_playlist);
+    return TRUE; 
+error:
+    g_object_unref (download);
+    g_free (playlist_uri);
     g_free (current_playlist);
     return FALSE;
-  default:
-  	g_free (current_playlist);
-  	return FALSE;
-  }
 }
 
 static gboolean
