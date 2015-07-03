@@ -40,6 +40,8 @@
 #define BUFFER_WATERMARK_HIGH_RATIO 0.5
 #define BUFFER_WATERMARK_LOW_RATIO 0.5
 
+#define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
+
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
@@ -832,13 +834,16 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
 {
   GstObject *parent = gst_element_get_parent(demux);
   GObjectClass *klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
-  GstClockTime res = GST_CLOCK_TIME_NONE;
+  GstClockTime res = DEFAULT_BUFFER_DURATION;
 
-  // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
-  if (g_object_class_find_property (klass, "buffer-duration")) {
-    g_object_get (parent, "buffer-duration", &res, NULL);
-  } else if (g_object_class_find_property (klass, "max-size-time")) {
-    g_object_get (parent, "max-size-time", &res, NULL);
+  if (parent) {
+    // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
+    if (g_object_class_find_property (klass, "buffer-duration")) {
+      g_object_get (parent, "buffer-duration", &res, NULL);
+    } else if (g_object_class_find_property (klass, "max-size-time")) {
+      g_object_get (parent, "max-size-time", &res, NULL);
+    }
+    gst_object_unref (parent);
   }
 
   return res;
@@ -875,8 +880,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     skippy_hls_demux_is_caching_allowed (demux), // Allow caching directive
     &err // Error
   );
-  g_free (main_playlist_uri);
-  g_free (current_playlist);
+
   // Handle fetch result
   switch (fetch_ret) {
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
@@ -884,7 +888,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     // Load M3U8 buffer into parser
     buf = skippy_uri_downloader_get_buffer (demux->playlist_downloader);
     if (!skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf)) {
-      GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist."), (NULL));
+      GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid playlist"), (NULL));
       ret = FALSE;
       break;
     }
@@ -904,6 +908,9 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (buf) {
     gst_buffer_unref (buf);
   }
+
+  g_free (main_playlist_uri);
+  g_free (current_playlist);
   return ret;
 }
 
@@ -968,8 +975,6 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
 
   // Check if wait condition is enabled - if not we can just continue
   if (demux->continuing) {
-    // Make sure we definitely halt at the next possible scheduling step again now
-    demux->continuing = FALSE;
     GST_OBJECT_UNLOCK (demux);
     // Continue downloading
     return TRUE;
@@ -985,7 +990,8 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration));
 
   // Check for wether we should limit downloading
-  if (pos != GST_CLOCK_TIME_NONE && demux->position > pos + max_buffer_duration) {
+  if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE
+    && demux->position > pos + max_buffer_duration) {
     // Diff' between current playhead and buffer-head in microseconds
     max_wait = demux->position - pos - max_buffer_duration;
     GST_TRACE ("Waiting in task as we have preloaded enough (until %" GST_TIME_FORMAT " of media position)",
@@ -993,8 +999,6 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     // Timed-cond wait here
     GST_OBJECT_LOCK (demux);
     skippy_hls_stream_loop_wait_locked (demux, max_wait);
-    // Set back wait condition
-    demux->continuing = FALSE;
     GST_OBJECT_UNLOCK (demux);
     return FALSE;
   }
@@ -1081,10 +1085,11 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // Post stats message
     skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_DOWNLOAD_FRAGMENT,
       fragment->download_stop_time - fragment->download_start_time, fragment->size);
-    // Reset failure counter
+    // Reset failure counter, position and scheduling condition
     GST_OBJECT_LOCK (demux);
     demux->position = fragment->start_time;
     demux->download_failed_count = 0;
+    demux->continuing = FALSE;
     GST_OBJECT_UNLOCK (demux);
     // Go to next fragment
     skippy_m3u8_client_advance_to_next_fragment (demux->client);
@@ -1100,8 +1105,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     GST_DEBUG ("Next retry scheduled in: %" GST_TIME_FORMAT, GST_TIME_ARGS (time_until_retry));
     // Waits before retrying - might be interrupted by a PAUSED -> PLAYING transition or by a seek event
     skippy_hls_stream_loop_wait_locked (demux, time_until_retry);
-    // If there was an error we should not schedule against buffer fill amount
-    // but retry right away
+    // If there was an error we should not schedule but retry right away
     demux->continuing = TRUE;
     GST_OBJECT_UNLOCK (demux);
   }
