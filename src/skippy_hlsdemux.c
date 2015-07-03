@@ -461,7 +461,7 @@ skippy_hls_demux_query_position (SkippyHLSDemux * demux)
   if (!query_ret) {
     // If we didn't get a proper position we could be anywhere in the stream
     // and should assume it's MAX int in order to keep re-buffering going
-    pos = G_MAXINT64;
+    pos = GST_CLOCK_TIME_NONE;
   }
   GST_TRACE ("Position query result: %" GST_TIME_FORMAT, GST_TIME_ARGS ((GstClockTime) pos));
   return pos;
@@ -499,9 +499,7 @@ static void
 skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 {
   gchar* uri = NULL;
-
-  // Sending stats message about first playlist fetch
-  skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, (guint64) gst_util_get_timestamp (), 0);
+  guint64 timestamp = (guint64) gst_util_get_timestamp ();
 
   // Query the playlist URI
   uri = skippy_hls_demux_query_location (demux);
@@ -519,6 +517,9 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
     goto error;
   }
   GST_OBJECT_UNLOCK (demux);
+
+  // Sending stats message about first playlist fetch
+  skippy_hls_demux_post_stat_msg (demux, STAT_TIME_OF_FIRST_PLAYLIST, timestamp, 0);
 
   // Updates duration field and posts message to bus
   skippy_hls_demux_update_duration (demux);
@@ -1021,7 +1022,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   gchar* referrer_uri = NULL;
   GstClockTime time_until_retry;
 
-  GST_DEBUG_OBJECT (demux, "Entering stream task");
+  GST_TRACE_OBJECT (demux, "Entering stream task");
 
   // Monitor queue levels
   g_object_get (demux->queue, "current-level-buffers", &queue_level, NULL);
