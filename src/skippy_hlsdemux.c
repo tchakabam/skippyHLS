@@ -847,6 +847,8 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
     gst_object_unref (parent);
   }
 
+  GST_DEBUG ("Max buffer duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (res));
+
   return res;
 }
 
