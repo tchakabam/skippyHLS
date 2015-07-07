@@ -77,17 +77,21 @@ static GstPadProbeReturn skippy_uri_downloader_src_probe (GstPad *pad, GstPadPro
 static GstBusSyncReply skippy_uri_downloader_bus_handler (GstBus * bus, GstMessage * message, gpointer data);
 static void skippy_uri_downloader_complete (SkippyUriDownloader * downloader);
 static gboolean skippy_uri_downloader_create_src (SkippyUriDownloader * downloader, gchar* uri);
+//static GstStateChangeReturn skippy_uri_downloader_change_state (GstElement *element, GstStateChange transition);
 
 // Define class
 static void
 skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
+  GstElementClass *gstelement_class = (GstElementClass*) klass;
 
   g_type_class_add_private (klass, sizeof (SkippyUriDownloaderPrivate));
 
   gobject_class->dispose = skippy_uri_downloader_dispose;
   gobject_class->finalize = skippy_uri_downloader_finalize;
+
+  //gstelement_class->change_state = skippy_uri_downloader_change_state;
 
   GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
@@ -432,35 +436,57 @@ skippy_uri_downloader_bus_handler (GstBus * bus,
 
 void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downloader, gboolean stream_start, gboolean segment)
 {
-  GstEvent* segment_event;
+  gboolean have_group_id;
+  guint group_id;
+  gchar* stream_id = NULL;
+  GstEvent* event = NULL;
   GstPad *sink = gst_element_get_static_pad (downloader->priv->typefind, "sink");
 
-  if (stream_start && G_UNLIKELY(downloader->priv->need_stream_start)) {
-    gboolean have_group_id;
-    guint group_id;
-    // Sending stream start event that we got on sink pad (sticky event)
-    gchar* stream_id = gst_pad_create_stream_id (downloader->priv->srcpad, GST_ELEMENT_CAST (downloader), NULL);
-    GstEvent *event = NULL; //gst_pad_get_sticky_event (demux->sinkpad, GST_EVENT_STREAM_START, 0);
+  GST_DEBUG ("Need segment: %d / Need stream-start: %d", downloader->priv->need_segment, downloader->priv->need_stream_start);
 
+  GST_DEBUG ("Sink pad parent: %s / %s",
+    GST_ELEMENT_NAME (gst_pad_get_parent_element (sink)),
+    GST_ELEMENT_NAME(downloader->priv->typefind));
+
+  event = gst_pad_get_sticky_event (sink, GST_EVENT_STREAM_START, 0);
+  if (event) {
+    //stream_start = TRUE;
+    GST_WARNING ("No sticky stream-start event");
+    gst_object_unref (event);
+    event = NULL;
+  }
+
+  if (stream_start && G_UNLIKELY(downloader->priv->need_stream_start)) {
+    // Sending stream start event that we got on sink pad (sticky event)
+    stream_id = gst_pad_create_stream_id (downloader->priv->srcpad, GST_ELEMENT_CAST (downloader), NULL);
     // Create stream start event from stream ID that we parsed from sink pad
     event = gst_event_new_stream_start (stream_id);
     gst_event_set_group_id (event, gst_util_group_id_next ());
-    gst_pad_send_event (sink, event);
-    g_free (stream_id);
     downloader->priv->need_stream_start = FALSE;
+    GST_DEBUG ("Sending %" GST_PTR_FORMAT, event);
+    gst_pad_send_event (sink, event);
+  }
+
+  event = gst_pad_get_sticky_event (sink, GST_EVENT_SEGMENT, 0);
+  if (event) {
+    gst_event_unref (event);
+  } else if (segment) {
+    GST_WARNING ("Sticky segment event not found");
+    downloader->priv->need_segment = TRUE;
   }
 
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
   if (segment && G_UNLIKELY(downloader->priv->need_segment)) {
     // Create new segment event from our own segment (time format)
     downloader->priv->segment.position = downloader->priv->fragment->start_time;
-    segment_event = gst_event_new_segment (&downloader->priv->segment);
-    GST_DEBUG ("Sending %" GST_PTR_FORMAT, segment_event);
-    gst_pad_send_event (sink, segment_event);
+    event = gst_event_new_segment (&downloader->priv->segment);
     downloader->priv->need_segment = FALSE;
+    GST_DEBUG ("Sending %" GST_PTR_FORMAT, event);
+    gst_pad_send_event (sink, event);
   }
 
   gst_object_unref (sink);
+  g_free (stream_id);
 }
 
 // Probe buffers from URI src streaming thread
@@ -503,6 +529,7 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   // This is only if we are not linked: Drop the buffer and append to our own
   // internal buffer.
   if (!gst_pad_is_linked (downloader->priv->srcpad)) {
+
     // Copy and append buffer to download aggregate
     if (downloader->priv->buffer == NULL) {
       downloader->priv->buffer = gst_buffer_new ();
@@ -516,7 +543,7 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
 
   // This sets the PTS on the buffer when we send a segment event
   if (downloader->priv->need_segment) {
-    GST_DEBUG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
+    GST_LOG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
       GST_TIME_ARGS (downloader->priv->fragment->start_time));
     GST_BUFFER_PTS (buf) = downloader->priv->fragment->start_time;
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT );
@@ -537,7 +564,7 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
   GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
   GstSegment bytes_segment;
 
-  GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
+  GST_TRACE ("Got %" GST_PTR_FORMAT, event);
 
   switch (GST_EVENT_TYPE(event)) {
   case GST_EVENT_SEGMENT:
@@ -555,7 +582,7 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
     skippy_uri_downloader_update_downstream_events (downloader, TRUE, FALSE);
     return GST_PAD_PROBE_OK;
   default:
-    // Dropping everything else here (like flush-start/stop)
+    // Dropping everything else here (like stream-start, flush-start/stop etc)
     return GST_PAD_PROBE_DROP;
   }
 }
@@ -689,11 +716,11 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
         gst_structure_set (extra_headers, "Cache-Control", G_TYPE_STRING,
             "no-cache", NULL);
       } else if (refresh) {
+        GST_DEBUG ("Cache-Control set to max-age=0");
         gst_structure_set (extra_headers, "Cache-Control", G_TYPE_STRING,
             "max-age=0", NULL);
       }
-      g_object_set (downloader->priv->urisrc, "extra-headers", extra_headers,
-          NULL);
+      g_object_set (downloader->priv->urisrc, "extra-headers", extra_headers, NULL);
       gst_structure_free (extra_headers);
     } else {
       g_object_set (downloader->priv->urisrc, "extra-headers", NULL, NULL);
