@@ -444,18 +444,6 @@ void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downlo
 
   GST_DEBUG ("Need segment: %d / Need stream-start: %d", downloader->priv->need_segment, downloader->priv->need_stream_start);
 
-  GST_DEBUG ("Sink pad parent: %s / %s",
-    GST_ELEMENT_NAME (gst_pad_get_parent_element (sink)),
-    GST_ELEMENT_NAME(downloader->priv->typefind));
-
-  event = gst_pad_get_sticky_event (sink, GST_EVENT_STREAM_START, 0);
-  if (event) {
-    //stream_start = TRUE;
-    GST_WARNING ("No sticky stream-start event");
-    gst_object_unref (event);
-    event = NULL;
-  }
-
   if (stream_start && G_UNLIKELY(downloader->priv->need_stream_start)) {
     // Sending stream start event that we got on sink pad (sticky event)
     stream_id = gst_pad_create_stream_id (downloader->priv->srcpad, GST_ELEMENT_CAST (downloader), NULL);
