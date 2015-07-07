@@ -459,7 +459,7 @@ void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downlo
   if (event) {
     gst_event_unref (event);
   } else if (segment) {
-    GST_WARNING ("Sticky segment event not found");
+    GST_DEBUG ("Sticky segment event not found");
     downloader->priv->need_segment = TRUE;
   }
 
@@ -512,8 +512,6 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   // This is only if we are not linked: Drop the buffer and append to our own
   // internal buffer.
   if (!gst_pad_is_linked (downloader->priv->srcpad)) {
-
-    GST_WARNING ("Not linked");
 
     // Copy and append buffer to download aggregate
     if (downloader->priv->buffer == NULL) {
