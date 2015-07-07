@@ -136,16 +136,18 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
 
   // Member objects
   demux->client = skippy_m3u8_client_new ();
-  demux->playlist_downloader = skippy_uri_downloader_new ();
   demux->playlist = NULL; // Storage for initial playlist
 
   // Internal elements
   demux->queue = gst_element_factory_make ("queue2", NULL);
   demux->queue_sinkpad = gst_element_get_static_pad (demux->queue, "sink");
   demux->downloader = skippy_uri_downloader_new ();
+  demux->playlist_downloader = skippy_uri_downloader_new ();
+
   // Add bin elements
   gst_bin_add (GST_BIN (demux), demux->queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
+  gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
 
   // Thread
   g_rec_mutex_init (&demux->stream_lock);
@@ -168,12 +170,6 @@ skippy_hls_demux_dispose (GObject * obj)
   if (demux->client) {
     skippy_m3u8_client_free (demux->client);
     demux->client = NULL;
-  }
-
-  // Remove playlist downloader
-  if (demux->playlist_downloader) {
-    g_object_unref (demux->playlist_downloader);
-    demux->playlist_downloader = NULL;
   }
 
   // Release ref to queue sinkpad
@@ -850,6 +846,8 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
     gst_object_unref (parent);
   }
 
+  res *= 2;
+
   GST_DEBUG ("Max buffer duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (res));
 
   return res;
@@ -877,6 +875,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   download = skippy_fragment_new (current_playlist);
   download->start_time = 0;
   download->stop_time = skippy_m3u8_client_get_total_duration (demux->client);
+
   // Download it
   fetch_ret = skippy_uri_downloader_fetch_fragment (demux->playlist_downloader,
     download, // Media fragment to load
@@ -996,7 +995,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration));
 
   // Check for wether we should limit downloading
-  if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE
+  if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE && pos >= 2*RETRY_TIME_BASE
     && demux->position > pos + max_buffer_duration) {
     // Diff' between current playhead and buffer-head in microseconds
     max_wait = demux->position - pos - max_buffer_duration;
@@ -1025,6 +1024,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GError *err = NULL;
   guint queue_level;
   gchar* referrer_uri = NULL;
+  gboolean playlist_refresh = FALSE;
   GstClockTime time_until_retry;
 
   GST_TRACE_OBJECT (demux, "Entering stream task");
@@ -1084,6 +1084,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
       GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
       skippy_hls_demux_refresh_playlist (demux);
+      playlist_refresh = TRUE;
     }
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
@@ -1105,7 +1106,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GST_DEBUG_OBJECT (demux, "Exiting task now ...");
 
   // Handle error
-  if (err) {
+  if (err && !playlist_refresh) {
     GST_OBJECT_LOCK (demux);
     time_until_retry = skippy_hls_demux_get_time_until_retry (demux);
     GST_DEBUG ("Next retry scheduled in: %" GST_TIME_FORMAT, GST_TIME_ARGS (time_until_retry));

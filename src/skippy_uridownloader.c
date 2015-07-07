@@ -484,9 +484,9 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
 {
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (user_data);
   GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
-  gsize bytes;
+  gsize bytes = gst_buffer_get_size (buf);
 
-  GST_TRACE ("Got %" GST_PTR_FORMAT, buf);
+  GST_TRACE ("Got %" GST_PTR_FORMAT " of size %" G_GSIZE_FORMAT, buf, bytes);
 
   /* NOTE: HTTP errors (404, 500, etc...) are also pushed through this pad as
    * response but the source element will also post a warning or error message
@@ -495,14 +495,9 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
 
   // There was an error downloading, quit quietly
   if (downloader->priv->err) {
-    GST_DEBUG ("Detected error, dropping item");
+    GST_WARNING ("Detected error, dropping item");
     return GST_PAD_PROBE_DROP;
   }
-
-  // Get size of buffer
-  bytes = gst_buffer_get_size (buf);
-
-  GST_TRACE ("The uri fetcher received a new buffer of size %" G_GSIZE_FORMAT, bytes);
 
   // Increment size on fragment model
   downloader->priv->fragment->size += bytes;
@@ -518,11 +513,14 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   // internal buffer.
   if (!gst_pad_is_linked (downloader->priv->srcpad)) {
 
+    GST_WARNING ("Not linked");
+
     // Copy and append buffer to download aggregate
     if (downloader->priv->buffer == NULL) {
       downloader->priv->buffer = gst_buffer_new ();
     }
-    // Copy the buffer into the internal storage
+    // Append the buffer into the internal storage (transfers full ownership of the copy)
+    // We rather copy because the original is still owned by the pad at this point
     downloader->priv->buffer = gst_buffer_append (downloader->priv->buffer, gst_buffer_copy(buf));
     // Drop this buffer (this will return FLOW_OK to internal src)
     return GST_PAD_PROBE_DROP;
