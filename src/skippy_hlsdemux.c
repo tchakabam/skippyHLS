@@ -846,6 +846,8 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
     gst_object_unref (parent);
   }
 
+  // As a heuristic we choose to use twice as much as the playbin uses internally
+  // as otherwise some deadlocks might appear (playback wont start and we wont download more - to be avoided)
   res *= 2;
 
   GST_DEBUG ("Max buffer duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (res));
