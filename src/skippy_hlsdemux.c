@@ -236,9 +236,9 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     GST_OBJECT_UNLOCK (demux);
     // Configure internal queue: get rid of all size limitations, don't emit buffering messages
     g_object_set (demux->queue,
-      "max-size-buffers", 1024*1024,
-      "max-size-bytes", 128 * 1000000,
-      "max-size-time", 3600 * GST_SECOND,
+      "max-size-buffers", 0,
+      "max-size-bytes", 0,
+      "max-size-time", 0,
       "use-buffering", FALSE,
       NULL);
     GST_OBJECT_LOCK (demux);
@@ -330,7 +330,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   GstStateChangeReturn ret;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
 
-  GST_TRACE ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
+  GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
 
   switch (transition) {
@@ -347,6 +347,8 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       skippy_hls_demux_restart (demux);
+      break;
+    case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     // Interrupt streaming thread
     case GST_STATE_CHANGE_PAUSED_TO_READY:
@@ -554,6 +556,7 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
     GST_WARNING ("No src pad on downloader found yet");
     return;
   }
+
   // Link the internal source with our queue sink
   gst_pad_link (downloader_srcpad, demux->queue_sinkpad);
   gst_object_unref (downloader_srcpad);
