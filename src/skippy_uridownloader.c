@@ -378,6 +378,14 @@ skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, cons
     );
 
     if (!downloader->priv->got_segment) {
+      // Guard from HTTP client internally retrying a broken connection
+      // and giving us data we already got from the previous attempt.
+      // In this case we will just cancel and resume the download
+      // in a smart way ourselves if necessary.
+      if (segment->position < downloader->priv->bytes_loaded) {
+        skippy_uri_downloader_cancel (downloader);
+        return TRUE;
+      }
       // Update total bytes and reset counter
       downloader->priv->bytes_loaded = segment->position;
       downloader->priv->bytes_total = segment->duration;
@@ -394,8 +402,7 @@ skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, cons
 // Handles errors from message bus sync handler of URI src (runs in it's streaming thread)
 // Download mutex is locked when this is called (only while fetch executes).
 static void
-skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader,
-  GstMessage* message)
+skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader, GstMessage* message)
 {
   GError *err = NULL;
 
@@ -827,9 +834,6 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
     fragment->range_end = downloader->priv->bytes_total;
   }
 
-  //fragment->range_start = 0;
-  //fragment->range_end = 50000;
-
   // Setup URL & range
   if (! (skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)
     && skippy_uri_downloader_set_range (downloader, fragment->range_start, fragment->range_end))) {
@@ -870,18 +874,19 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   // After this we are sure the streaming thread of the data source will not push any more data or events
   // and all messages from the URI src element are flushed (in sync with this call)
 
-  // Handle errors
+  // Handle errors (even when completed data)
   if (downloader->priv->err) {
-    fragment->completed = FALSE;
     g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
-  // Cancellation
-  if (fragment->cancelled || downloader->priv->err) {
+
+  // Cancellation (this is when we have been intendendly cancelled)
+  if (fragment->cancelled) {
     g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_CANCELLED;
   }
-  // Success completion
+
+  // Successful completion
   g_mutex_unlock (&downloader->priv->download_lock);
   return SKIPPY_URI_DOWNLOADER_COMPLETED;
 }
