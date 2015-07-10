@@ -101,6 +101,15 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
   return TRUE;
 }
 
+void ReplaceStringInPlace(std::string& subject, const std::string& search,
+                          const std::string& replace) {
+    size_t pos = 0;
+    while((pos = subject.find(search, pos)) != std::string::npos) {
+         subject.replace(pos, search.length(), replace);
+         pos = replace.length();
+    }
+}
+
 // Called to get the next fragment
 SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * client)
 {
@@ -114,6 +123,8 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   }
 
   item = client->priv->playlist.items.at (client->priv->current_index);
+
+  ReplaceStringInPlace(item.url, "ec-hls-media.soundcloud.com", "ip-10-70-28-172.eu-west.s-cloud.net");
 
   fragment = skippy_fragment_new (item.url.c_str());
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
