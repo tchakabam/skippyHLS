@@ -890,7 +890,7 @@ skippy_hls_push_fragment (SkippyHLSDemux * demux, SkippyFragment* fragment)
       GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)));
 
   // Flagging buffer as discontinuous if necessary
-  if (fragment->discontinuous) {
+  if (demux->need_segment) {
     GST_DEBUG_OBJECT (demux, "Marking fragment as discontinuous");
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
   } else {
