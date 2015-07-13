@@ -30,6 +30,8 @@
 #include "skippyHLS/skippy_fragment.h"
 #include "skippyHLS/skippy_uridownloader.h"
 
+#include <string.h>
+
 #include <glib.h>
 
 #define GST_CAT_DEFAULT uridownloader_debug
@@ -55,6 +57,7 @@ struct _SkippyUriDownloaderPrivate
   GCond cond;
   GMutex download_lock;
 
+  gboolean previous_was_interrupted;
   gboolean set_uri;
   gboolean fetching;
   gboolean need_segment, need_stream_start, got_segment;
@@ -72,7 +75,7 @@ static GstStaticPadTemplate srcpadtemplate = GST_STATIC_PAD_TEMPLATE ("src",
 
 static void skippy_uri_downloader_finalize (GObject * object);
 static void skippy_uri_downloader_dispose (GObject * object);
-static void skippy_uri_downloader_reset (SkippyUriDownloader * downloader);
+static void skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* fragment);
 static GstPadProbeReturn skippy_uri_downloader_src_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 static GstBusSyncReply skippy_uri_downloader_bus_handler (GstBus * bus, GstMessage * message, gpointer data);
 static void skippy_uri_downloader_complete (SkippyUriDownloader * downloader);
@@ -147,7 +150,30 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   gst_segment_init (&downloader->priv->segment, GST_FORMAT_TIME);
 
   // Reset private state fields
-  skippy_uri_downloader_reset (downloader);
+  skippy_uri_downloader_reset (downloader, NULL);
+}
+
+static gboolean
+compare_uri_resource_path (gchar* uri1, gchar *uri2)
+{
+  gboolean ret;
+  GstUri *prev_uri, *next_uri;
+  gchar *prev_uri_no_query, *next_uri_no_query;
+
+  prev_uri = gst_uri_from_string (uri1);
+  next_uri = gst_uri_from_string (uri2);
+  gst_uri_set_query_string (prev_uri, "");
+  gst_uri_set_query_string (next_uri, "");
+  prev_uri_no_query = gst_uri_to_string (prev_uri);
+  next_uri_no_query = gst_uri_to_string (next_uri);
+
+  ret = strcmp(prev_uri_no_query, next_uri_no_query) == 0;
+
+  gst_uri_unref (prev_uri);
+  gst_uri_unref (next_uri);
+  g_free (prev_uri_no_query);
+  g_free (next_uri_no_query);
+  return ret;
 }
 
 // Reset object - can not be called concurrently with fetch or getters/setters functions
@@ -155,7 +181,7 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
 //
 // MT-safe
 static void
-skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
+skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* next_fragment)
 {
   g_return_if_fail (downloader != NULL);
 
@@ -164,9 +190,29 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
 
   g_mutex_lock (&downloader->priv->download_lock);
 
-  // Per download state
-  downloader->priv->bytes_loaded = 0;
-  downloader->priv->bytes_total = 0;
+  // Is this a retrial from an unfinished download?
+  // We can check that its the same by comparing the URIs and the loaded bytes count
+  // NOTE: we do the string comparison only after the bytes count is off as its more expensive
+  // If we are seeking in some way (i.e will issue a segment event to the stream) then wont consider resuming at all.
+  if (G_UNLIKELY(!downloader->priv->need_segment
+    // Did we not complete the previous download?
+     && downloader->priv->bytes_loaded != downloader->priv->bytes_total
+    // reset might not be called to prepare a fetch and/or there might be no previous download
+     && next_fragment && downloader->priv->fragment
+     // Is it the same URI?
+     && compare_uri_resource_path (next_fragment->uri, downloader->priv->fragment->uri))) {
+    // If the previous download was not completed and we are currently retrying the same
+    // we are not resetting the fields and will later perform a range request to get only
+    // the missing stuff.
+    GST_DEBUG ("Previous download interruption detected");
+    downloader->priv->previous_was_interrupted = TRUE;
+  } else {
+    // If above condition does not hold: Fresh new download state
+    downloader->priv->bytes_loaded = 0;
+    downloader->priv->bytes_total = 0;
+    downloader->priv->previous_was_interrupted = FALSE;
+  }
+
   downloader->priv->got_segment = FALSE;
 
   // Clear error when present
@@ -179,7 +225,8 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader)
   }
 
   // Reset our own buffer where we'll concatenate all the download into
-  if (downloader->priv->buffer) {
+  // Only when we were not interrupted before (or this is a fresh start with previous fragment == NULL)
+  if (downloader->priv->buffer && !downloader->priv->previous_was_interrupted) {
     gst_buffer_unref (downloader->priv->buffer);
     downloader->priv->buffer = NULL;
   }
@@ -202,7 +249,7 @@ skippy_uri_downloader_dispose (GObject * object)
   g_return_if_fail (downloader->priv);
 
   // Let's reset first (this is flushing the message bus and unref-ing any owned download)
-  skippy_uri_downloader_reset (downloader);
+  skippy_uri_downloader_reset (downloader, NULL);
 
   // Get rid of private bus and buffer
   if (downloader->priv->bus) {
@@ -291,6 +338,11 @@ skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
   GstStructure* s;
   float percentage = 100.0f * bytes_loaded / bytes_total;
 
+  // Be silent if we are not linked
+  if (!gst_pad_is_linked (downloader->priv->srcpad)) {
+    return;
+  }
+
   GST_TRACE ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
     (long int) bytes_loaded,
     (long int) bytes_total,
@@ -353,6 +405,14 @@ skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, cons
     );
 
     if (!downloader->priv->got_segment) {
+      // Guard from HTTP client internally retrying a broken connection
+      // and giving us data we already got from the previous attempt.
+      // In this case we will just cancel and resume the download
+      // in a smart way ourselves if necessary.
+      if (segment->position < downloader->priv->bytes_loaded) {
+        skippy_uri_downloader_cancel (downloader);
+        return TRUE;
+      }
       // Update total bytes and reset counter
       downloader->priv->bytes_loaded = segment->position;
       downloader->priv->bytes_total = segment->duration;
@@ -369,8 +429,7 @@ skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, cons
 // Handles errors from message bus sync handler of URI src (runs in it's streaming thread)
 // Download mutex is locked when this is called (only while fetch executes).
 static void
-skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader,
-  GstMessage* message)
+skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader, GstMessage* message)
 {
   GError *err = NULL;
 
@@ -455,13 +514,19 @@ void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downlo
     gst_pad_send_event (sink, event);
   }
 
+  //GST_DEBUG ("Getting sticky segment event");
+  /*
+  GST_OBJECT_LOCK (sink);
   event = gst_pad_get_sticky_event (sink, GST_EVENT_SEGMENT, 0);
+  GST_OBJECT_UNLOCK (sink);
   if (event) {
     gst_event_unref (event);
   } else if (segment) {
     GST_DEBUG ("Sticky segment event not found");
     downloader->priv->need_segment = TRUE;
   }
+  */
+  //GST_DEBUG ("Done with sticky segment event");
 
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
   if (segment && G_UNLIKELY(downloader->priv->need_segment)) {
@@ -649,9 +714,11 @@ skippy_uri_downloader_set_range (SkippyUriDownloader * downloader,
   g_return_val_if_fail (range_end >= -1, FALSE);
 
   if (range_start || (range_end >= 0)) {
-    GST_DEBUG_OBJECT (downloader, "Setting range to %d - %d (Creating seek event on URI src)", (int) range_start, (int) range_end);
-    seek = gst_event_new_seek (1.0, GST_FORMAT_BYTES, GST_SEEK_FLAG_FLUSH,
-        GST_SEEK_TYPE_SET, range_start, GST_SEEK_TYPE_SET, range_end);
+    GST_DEBUG_OBJECT (downloader, "Setting range to %d - %d (Sending seek event to URI src)", (int) range_start, (int) range_end);
+    seek = gst_event_new_seek (1.0,
+      GST_FORMAT_BYTES, GST_SEEK_FLAG_NONE,
+      GST_SEEK_TYPE_SET, range_start,
+      GST_SEEK_TYPE_SET, range_end);
     return gst_element_send_event (downloader->priv->urisrc, seek);
   }
   return TRUE;
@@ -757,6 +824,10 @@ skippy_uri_downloader_handle_failure (SkippyUriDownloader * downloader, GError *
     // Copy error but our own one for internal processing
     GST_ERROR_OBJECT (downloader, "Error fetching URI: %s", downloader->priv->err->message);
     *err = g_error_copy (downloader->priv->err);
+
+    // Did we miss anything?
+    GST_DEBUG ("Error after loading %d bytes, missing %d bytes",
+      (int) downloader->priv->bytes_loaded, (int) (downloader->priv->bytes_total - downloader->priv->bytes_loaded));
   }
   return SKIPPY_URI_DOWNLOADER_FAILED;
 }
@@ -774,8 +845,9 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
   g_return_val_if_fail (*err == NULL, SKIPPY_URI_DOWNLOADER_FAILED);
 
-  // Let's first make sure we are completely reset
-  skippy_uri_downloader_reset (downloader);
+  // Let's first make sure we are completely reset, but pass in the current fragment
+  // to eventually prepare to resume a previous broken download ...
+  skippy_uri_downloader_reset (downloader, fragment);
 
   // Aquire download lock
   g_mutex_lock (&downloader->priv->download_lock);
@@ -787,6 +859,12 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   if (!skippy_uri_downloader_create_src (downloader, fragment->uri)) {
     g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_FAILED;
+  }
+
+  // If we were interrupted previously, resume at this point
+  if (downloader->priv->previous_was_interrupted) {
+    fragment->range_start = downloader->priv->bytes_loaded + 1;
+    fragment->range_end = downloader->priv->bytes_total;
   }
 
   // Setup URL & range
@@ -829,18 +907,19 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   // After this we are sure the streaming thread of the data source will not push any more data or events
   // and all messages from the URI src element are flushed (in sync with this call)
 
-  // Handle errors
+  // Handle errors (even when completed data)
   if (downloader->priv->err) {
-    fragment->completed = FALSE;
     g_mutex_unlock (&downloader->priv->download_lock);
     return skippy_uri_downloader_handle_failure (downloader, err);
   }
-  // Cancellation
-  if (fragment->cancelled || downloader->priv->err) {
+
+  // Cancellation (this is when we have been intendendly cancelled)
+  if (fragment->cancelled) {
     g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_CANCELLED;
   }
-  // Success completion
+
+  // Successful completion
   g_mutex_unlock (&downloader->priv->download_lock);
   return SKIPPY_URI_DOWNLOADER_COMPLETED;
 }

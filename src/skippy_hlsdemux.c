@@ -1093,7 +1093,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     }
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
-    GST_DEBUG ("Fragment download completed");
+    GST_DEBUG ("Fragment download completed successfully");
     // Post stats message
     skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_DOWNLOAD_FRAGMENT,
       fragment->download_stop_time - fragment->download_start_time, fragment->size);
