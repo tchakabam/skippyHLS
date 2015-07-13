@@ -94,7 +94,7 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
   gobject_class->dispose = skippy_uri_downloader_dispose;
   gobject_class->finalize = skippy_uri_downloader_finalize;
 
-  gstelement_class->change_state = skippy_uri_downloader_change_state;
+  //gstelement_class->change_state = skippy_uri_downloader_change_state;
 
   GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
@@ -239,6 +239,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   GST_TRACE ("Reset done");
 }
 
+/*
 static GstStateChangeReturn
 skippy_uri_downloader_change_state (GstElement *element, GstStateChange transition)
 {
@@ -251,6 +252,7 @@ skippy_uri_downloader_change_state (GstElement *element, GstStateChange transiti
   // Call parent
   return GST_ELEMENT_CLASS (skippy_uri_downloader_parent_class)->change_state (element, transition);
 }
+*/
 
 // Dispose function - frees all resources
 static void
