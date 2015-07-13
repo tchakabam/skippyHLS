@@ -35,10 +35,7 @@ typedef struct _SkippyM3U8Client
   struct SkippyM3U8ClientPrivate* priv;
 } SkippyM3U8Client;
 
-// Initialize global debug log category (call only once)
-void skippy_m3u8_client_init ();
-
-SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri);
+SkippyM3U8Client *skippy_m3u8_client_new ();
 void skippy_m3u8_client_free (SkippyM3U8Client * client);
 
 // Called to get the next fragment
@@ -60,6 +57,6 @@ GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);
 
 gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client);
-gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client);
+gboolean skippy_m3u8_client_is_caching_allowed(SkippyM3U8Client * client);
 
 G_END_DECLS

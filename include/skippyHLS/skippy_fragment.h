@@ -54,9 +54,7 @@ struct _SkippyFragment
   guint64 stop_time;             /* Media stop time of the fragment */
   guint64 duration;              /* Media fragment duration */
   gboolean discontinuous;        /* Whether this fragment is discontinuous or not */
-  gboolean decrypted;
-
-  SkippyFragmentPrivate *priv;
+  gsize size;
 };
 
 struct _SkippyFragmentClass
@@ -65,14 +63,6 @@ struct _SkippyFragmentClass
 };
 
 GType skippy_fragment_get_type (void);
-
-GstBuffer * skippy_fragment_get_buffer (SkippyFragment *fragment);
-gsize skippy_fragment_get_buffer_size (SkippyFragment* fragment);
-void skippy_fragment_set_caps (SkippyFragment * fragment, GstCaps * caps);
-GstCaps * skippy_fragment_get_caps (SkippyFragment * fragment);
-gboolean skippy_fragment_add_buffer (SkippyFragment *fragment, GstBuffer *buffer);
-SkippyFragment * skippy_fragment_new (const gchar* uri, gchar* key_uri, guint8* iv);
-void skippy_fragment_complete (SkippyFragment * fragment, struct SkippyUriDownloader* downloader);
-gboolean skippy_fragment_decrypt (SkippyFragment * fragment, struct SkippyUriDownloader* downloader);
+SkippyFragment * skippy_fragment_new (const gchar* uri);
 
 G_END_DECLS

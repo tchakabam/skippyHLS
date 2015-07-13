@@ -34,6 +34,9 @@ G_BEGIN_DECLS
 #define IS_SKIPPY_SURI_DOWNLOADER(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj),TYPE_SKIPPY_URI_DOWNLOADER))
 #define IS_SKIPPY_URI_DOWNLOADER_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass),TYPE_SKIPPY_URI_DOWNLOADER))
 
+// Constants for custom element message names
+#define SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME "skippy-hlsdemux-download"
+
 typedef struct _SkippyUriDownloader SkippyUriDownloader;
 typedef struct _SkippyUriDownloaderPrivate SkippyUriDownloaderPrivate;
 typedef struct _SkippyUriDownloaderClass SkippyUriDownloaderClass;
@@ -49,14 +52,14 @@ typedef enum {
 
 struct _SkippyUriDownloader
 {
-  GstObject parent;
+  GstBin parent;
 
   SkippyUriDownloaderPrivate *priv;
 };
 
 struct _SkippyUriDownloaderClass
 {
-  GstObjectClass parent_class;
+  GstBinClass parent_class;
 
   /*< private >*/
   gpointer _gst_reserved[GST_PADDING];
@@ -64,12 +67,16 @@ struct _SkippyUriDownloaderClass
 
 GType skippy_uri_downloader_get_type (void);
 
-SkippyUriDownloader * skippy_uri_downloader_new (SkippyUriDownloaderCallback callback, GstElement* parent_element);
+// URI can be NULL (then source will be created on demand with first fetch)
+SkippyUriDownloader * skippy_uri_downloader_new ();
+
+void skippy_uri_downloader_prepare (SkippyUriDownloader * downloader, gchar* uri);
 SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,
 	const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
-void skippy_uri_downloader_reset (SkippyUriDownloader *downloader);
-void skippy_uri_downloader_cancel (SkippyUriDownloader *downloader);
-void skippy_uri_downloader_free (SkippyUriDownloader *downloader);
-GstElement* skippy_uri_downloader_get_parent (SkippyUriDownloader *downloader);
+void skippy_uri_downloader_set_segment (SkippyUriDownloader * downloader, GstSegment segment);
+GstSegment skippy_uri_downloader_get_segment (SkippyUriDownloader * downloader);
+GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader);
+
+void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader);
 
 G_END_DECLS

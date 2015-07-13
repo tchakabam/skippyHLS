@@ -16,9 +16,9 @@ using namespace std;
 
 struct SkippyM3U8ClientPrivate
 {
-  SkippyM3U8ClientPrivate (string uri)
+  SkippyM3U8ClientPrivate ()
   :current_index(0)
-  ,playlist(uri)
+  ,playlist("")
   {
 
   }
@@ -33,15 +33,20 @@ struct SkippyM3U8ClientPrivate
   recursive_mutex mutex;
 };
 
-void skippy_m3u8_client_init ()
+static gpointer skippy_m3u8_client_init_once (gpointer user_data)
 {
   GST_DEBUG_CATEGORY_INIT (skippy_m3u8_debug, "skippyhls-m3u8", 0, "M3U8 client");
+  return NULL;
 }
 
-SkippyM3U8Client *skippy_m3u8_client_new (const gchar * uri)
+SkippyM3U8Client *skippy_m3u8_client_new ()
 {
+  // Static one-time initialization
+  static GOnce init_once = G_ONCE_INIT;
+  g_once (&init_once, skippy_m3u8_client_init_once, NULL);
+
   SkippyM3U8Client* client = g_slice_new0 (SkippyM3U8Client);
-  client->priv = new SkippyM3U8ClientPrivate(string(uri));
+  client->priv = new SkippyM3U8ClientPrivate();
   return client;
 }
 
@@ -110,7 +115,7 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
 
   item = client->priv->playlist.items.at (client->priv->current_index);
 
-  fragment = skippy_fragment_new (item.url.c_str(), NULL, NULL);
+  fragment = skippy_fragment_new (item.url.c_str());
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
   fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
   fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
@@ -198,7 +203,7 @@ gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client)
   return FALSE;
 }
 
-gboolean skippy_m3u8_client_allow_cache(SkippyM3U8Client * client)
+gboolean skippy_m3u8_client_is_caching_allowed(SkippyM3U8Client * client)
 {
   //lock_guard<recursive_mutex> lock(client->priv->mutex);
   return TRUE;

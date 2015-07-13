@@ -46,8 +46,8 @@ G_BEGIN_DECLS
 typedef struct _SkippyHLSDemux SkippyHLSDemux;
 typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
 
+// Constants for custom element message names
 #define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
-#define SKIPPY_HLS_DEMUX_DOWNLOADING_MSG_NAME "skippy-hlsdemux-download"
 
 /**
  * SkippyHLSDemux:
@@ -67,31 +67,17 @@ struct _SkippyHLSDemux
   GstElement* queue;
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;
+  SkippyUriDownloader *playlist_downloader;
   SkippyM3U8Client *client;     /* M3U8 client */
-
-  /* Properties */
-  guint buffer_ahead_duration_secs;
-  gfloat bitrate_limit;         /* limit of the available bitrate to use */
-  guint connection_speed;       /* Network connection speed in kbps (0 = unknown) */
-  gboolean caching_enabled;		/* Enable/disable caching */
 
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
 
   /* Internal state */
-  GstSegment segment;
-  GstClockTime duration; // cache for the duration computation of the M3U8 client
-  gboolean have_group_id;
-  guint group_id;
-  guint64 next_update;
+  GstClockTime position;
   gint download_failed_count;
-  gboolean need_segment;
-  gboolean seeked;
-  gboolean linked;
-
-  /* Current download rate (bps) */
-  gint current_download_rate;
+  gboolean continuing;
 };
 
 struct _SkippyHLSDemuxClass
