@@ -131,9 +131,9 @@ gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime tar
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
   SkippyM3UItem item;
-  unsigned long target_pos = (unsigned long) GST_TIME_AS_NSECONDS(target);
+  GstClockTime target_pos = (GstClockTime) GST_TIME_AS_NSECONDS(target);
 
-  GST_LOG ("Seek to target: %ld ns", target_pos);
+  GST_LOG ("Seek to target: %llu ns", target_pos);
 
   for (int i=0;i<client->priv->playlist.items.size();i++) {
     item = client->priv->playlist.items.at(i);
