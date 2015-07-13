@@ -846,9 +846,12 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
     gst_object_unref (parent);
   }
 
-  // As a heuristic we choose to use twice as much as the playbin uses internally
-  // as otherwise some deadlocks might appear (playback wont start and we wont download more - to be avoided)
-  res *= 2;
+  // Create and activate new source pad (linked as a ghost pad to our queue source pad)
+  templ = gst_static_pad_template_get (&srctemplate);
+  queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
+  demux->srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
+  gst_object_unref (templ);
+  gst_object_unref (queue_srcpad);
 
   GST_DEBUG ("Max buffer duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (res));
 
