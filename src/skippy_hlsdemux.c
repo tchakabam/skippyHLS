@@ -87,6 +87,33 @@ static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 
+static GstObject* find_first_parent_object_with_property (GstObject* self, const gchar* prop, gboolean toplevel)
+{
+  GObjectClass *klass;
+  GstObject *parent_swap, *parent = gst_element_get_parent(self);
+  GstObject *tl_parent = NULL;
+
+  while (parent) {
+    klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
+    parent_swap = parent;
+    // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
+    if (g_object_class_find_property (klass, prop)) {
+      // If we are looking for the top-level parent with this property then simply store the
+      // pointer and iterate through
+      if (toplevel) {
+        tl_parent = parent;
+      } else {
+        // Otherwise we can just return
+        return parent;
+      }
+    }
+    parent = gst_element_get_parent(parent_swap);
+    gst_object_unref (parent_swap);
+  }
+
+  return tl_parent;
+}
+
 // Set up our class
 static void
 skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
@@ -832,23 +859,15 @@ skippy_hls_demux_is_caching_allowed (SkippyHLSDemux * demux)
 static GstClockTime
 skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
 {
-  GstObject *parent = gst_element_get_parent(demux);
+  // Find top-level object with buffer-duration property
+  GstObject *parent = find_first_parent_object_with_property (GST_OBJECT(demux), "buffer-duration", TRUE);
   GObjectClass *klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
   GstClockTime res = DEFAULT_BUFFER_DURATION;
 
   if (parent) {
-    // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
-    if (g_object_class_find_property (klass, "buffer-duration")) {
-      g_object_get (parent, "buffer-duration", &res, NULL);
-    } else if (g_object_class_find_property (klass, "max-size-time")) {
-      g_object_get (parent, "max-size-time", &res, NULL);
-    }
+    g_object_get (parent, "buffer-duration", &res, NULL);
     gst_object_unref (parent);
   }
-
-  // As a heuristic we choose to use twice as much as the playbin uses internally
-  // as otherwise some deadlocks might appear (eg. playback wont start and we wont download more => to be avoided)
-  res *= 2;
 
   GST_DEBUG ("Max buffer duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (res));
 
