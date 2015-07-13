@@ -90,27 +90,27 @@ G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 static GstObject* find_first_parent_object_with_property (GstObject* self, const gchar* prop, gboolean toplevel)
 {
   GObjectClass *klass;
-  GstObject *parent_swap, *parent = gst_element_get_parent(self);
+  GstObject *parent_swap = NULL;
+  GstObject *parent = gst_element_get_parent(self);
   GstObject *tl_parent = NULL;
 
   while (parent) {
     klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
-    parent_swap = parent;
     // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
     if (g_object_class_find_property (klass, prop)) {
       // If we are looking for the top-level parent with this property then simply store the
       // pointer and iterate through
       if (toplevel) {
-        tl_parent = parent;
+        tl_parent = gst_object_ref(parent);
       } else {
         // Otherwise we can just return
         return parent;
       }
     }
-    parent = gst_element_get_parent(parent_swap);
+    parent_swap = parent;
+    parent = gst_element_get_parent (parent_swap);
     gst_object_unref (parent_swap);
   }
-
   return tl_parent;
 }
 
