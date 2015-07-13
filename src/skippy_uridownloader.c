@@ -80,7 +80,7 @@ static GstPadProbeReturn skippy_uri_downloader_src_probe (GstPad *pad, GstPadPro
 static GstBusSyncReply skippy_uri_downloader_bus_handler (GstBus * bus, GstMessage * message, gpointer data);
 static void skippy_uri_downloader_complete (SkippyUriDownloader * downloader);
 static gboolean skippy_uri_downloader_create_src (SkippyUriDownloader * downloader, gchar* uri);
-//static GstStateChangeReturn skippy_uri_downloader_change_state (GstElement *element, GstStateChange transition);
+static GstStateChangeReturn skippy_uri_downloader_change_state (GstElement *element, GstStateChange transition);
 
 // Define class
 static void
@@ -94,7 +94,7 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
   gobject_class->dispose = skippy_uri_downloader_dispose;
   gobject_class->finalize = skippy_uri_downloader_finalize;
 
-  //gstelement_class->change_state = skippy_uri_downloader_change_state;
+  gstelement_class->change_state = skippy_uri_downloader_change_state;
 
   GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
@@ -153,6 +153,9 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   skippy_uri_downloader_reset (downloader, NULL);
 }
 
+// This will compare two URIs by their string representation without the query part
+// We use this to compare URIs without considering time or user-auth-dependent CDN tokens in order to enable
+// caching or resuming for either resource whenever it is attempted to download it.
 static gboolean
 compare_uri_resource_path (gchar* uri1, gchar *uri2)
 {
@@ -234,6 +237,19 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   g_mutex_unlock (&downloader->priv->download_lock);
 
   GST_TRACE ("Reset done");
+}
+
+static GstStateChangeReturn
+skippy_uri_downloader_change_state (GstElement *element, GstStateChange transition)
+{
+  SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (element);
+
+  GST_DEBUG_OBJECT (element, "Performing transition: %s -> %s",
+    gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
+    gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
+
+  // Call parent
+  return GST_ELEMENT_CLASS (skippy_uri_downloader_parent_class)->change_state (element, transition);
 }
 
 // Dispose function - frees all resources
@@ -514,26 +530,26 @@ void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downlo
     gst_pad_send_event (sink, event);
   }
 
-  //GST_DEBUG ("Getting sticky segment event");
-  /*
-  GST_OBJECT_LOCK (sink);
+  GST_DEBUG ("Checking for sticky segment event");
   event = gst_pad_get_sticky_event (sink, GST_EVENT_SEGMENT, 0);
-  GST_OBJECT_UNLOCK (sink);
   if (event) {
     gst_event_unref (event);
-  } else if (segment) {
-    GST_DEBUG ("Sticky segment event not found");
+  } else {
+    GST_WARNING ("Sticky segment event not found");
+    GST_OBJECT_LOCK (downloader);
     downloader->priv->need_segment = TRUE;
+    GST_OBJECT_UNLOCK (downloader);
   }
-  */
-  //GST_DEBUG ("Done with sticky segment event");
+  GST_DEBUG ("Done with checking for sticky segment event");
 
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
   if (segment && G_UNLIKELY(downloader->priv->need_segment)) {
     // Create new segment event from our own segment (time format)
     downloader->priv->segment.position = downloader->priv->fragment->start_time;
     event = gst_event_new_segment (&downloader->priv->segment);
+    GST_OBJECT_LOCK (downloader);
     downloader->priv->need_segment = FALSE;
+    GST_OBJECT_UNLOCK (downloader);
     GST_DEBUG ("Sending %" GST_PTR_FORMAT, event);
     gst_pad_send_event (sink, event);
   }
@@ -551,7 +567,7 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   GstBuffer* buf = GST_PAD_PROBE_INFO_BUFFER(info);
   gsize bytes = gst_buffer_get_size (buf);
 
-  GST_TRACE ("Got %" GST_PTR_FORMAT " of size %" G_GSIZE_FORMAT, buf, bytes);
+  GST_TRACE_OBJECT (downloader, "Got %" GST_PTR_FORMAT " of size %" G_GSIZE_FORMAT, buf, bytes);
 
   /* NOTE: HTTP errors (404, 500, etc...) are also pushed through this pad as
    * response but the source element will also post a warning or error message
