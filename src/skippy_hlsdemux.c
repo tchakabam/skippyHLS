@@ -835,8 +835,6 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
   GstObject *parent = gst_element_get_parent(demux);
   GObjectClass *klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
   GstClockTime res = DEFAULT_BUFFER_DURATION;
-  GstPadTemplate *templ;
-  GstPad *queue_srcpad;
 
   if (parent) {
     // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
@@ -847,13 +845,6 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
     }
     gst_object_unref (parent);
   }
-
-  // Create and activate new source pad (linked as a ghost pad to our queue source pad)
-  templ = gst_static_pad_template_get (&srctemplate);
-  queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
-  demux->srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
-  gst_object_unref (templ);
-  gst_object_unref (queue_srcpad);
 
   // As a heuristic we choose to use twice as much as the playbin uses internally
   // as otherwise some deadlocks might appear (eg. playback wont start and we wont download more => to be avoided)
