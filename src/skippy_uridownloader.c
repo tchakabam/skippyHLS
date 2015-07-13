@@ -153,6 +153,29 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   skippy_uri_downloader_reset (downloader, NULL);
 }
 
+static gboolean
+compare_uri_resource_path (gchar* uri1, gchar *uri2)
+{
+  gboolean ret;
+  GstUri *prev_uri, *next_uri;
+  gchar *prev_uri_no_query, *next_uri_no_query;
+
+  prev_uri = gst_uri_from_string (uri1);
+  next_uri = gst_uri_from_string (uri2);
+  gst_uri_set_query_string (prev_uri, "");
+  gst_uri_set_query_string (next_uri, "");
+  prev_uri_no_query = gst_uri_to_string (prev_uri);
+  next_uri_no_query = gst_uri_to_string (next_uri);
+
+  ret = strcmp(prev_uri_no_query, next_uri_no_query) == 0;
+
+  gst_uri_unref (prev_uri);
+  gst_uri_unref (next_uri);
+  g_free (prev_uri_no_query);
+  g_free (next_uri_no_query);
+  return ret;
+}
+
 // Reset object - can not be called concurrently with fetch or getters/setters functions
 // Will cancel any ongoing download and block until it's finished (i.e until fetch function has exited)
 //
@@ -170,7 +193,6 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   // Is this a retrial from an unfinished download?
   // We can check that its the same by comparing the URIs and the loaded bytes count
   // NOTE: we do the string comparison only after the bytes count is off as its more expensive
-
   // If we are seeking in some way (i.e will issue a segment event to the stream) then wont consider resuming at all.
   if (G_UNLIKELY(!downloader->priv->need_segment
     // Did we not complete the previous download?
@@ -178,7 +200,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
     // reset might not be called to prepare a fetch and/or there might be no previous download
      && next_fragment && downloader->priv->fragment
      // Is it the same URI?
-     && strcmp(next_fragment->uri, downloader->priv->fragment->uri) == 0)) {
+     && compare_uri_resource_path (next_fragment->uri, downloader->priv->fragment->uri))) {
     // If the previous download was not completed and we are currently retrying the same
     // we are not resetting the fields and will later perform a range request to get only
     // the missing stuff.
@@ -487,13 +509,19 @@ void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downlo
     gst_pad_send_event (sink, event);
   }
 
+  //GST_DEBUG ("Getting sticky segment event");
+  /*
+  GST_OBJECT_LOCK (sink);
   event = gst_pad_get_sticky_event (sink, GST_EVENT_SEGMENT, 0);
+  GST_OBJECT_UNLOCK (sink);
   if (event) {
     gst_event_unref (event);
   } else if (segment) {
     GST_DEBUG ("Sticky segment event not found");
     downloader->priv->need_segment = TRUE;
   }
+  */
+  //GST_DEBUG ("Done with sticky segment event");
 
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
   if (segment && G_UNLIKELY(downloader->priv->need_segment)) {
