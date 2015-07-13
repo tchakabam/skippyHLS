@@ -338,6 +338,11 @@ skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
   GstStructure* s;
   float percentage = 100.0f * bytes_loaded / bytes_total;
 
+  // Be silent if we are not linked
+  if (!gst_pad_is_linked (downloader->priv->srcpad)) {
+    return;
+  }
+
   GST_TRACE ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
     (long int) bytes_loaded,
     (long int) bytes_total,
