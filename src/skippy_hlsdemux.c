@@ -861,7 +861,6 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
 {
   // Find top-level object with buffer-duration property
   GstObject *parent = find_first_parent_object_with_property (GST_OBJECT(demux), "buffer-duration", TRUE);
-  GObjectClass *klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
   GstClockTime res = DEFAULT_BUFFER_DURATION;
 
   if (parent) {

@@ -361,12 +361,12 @@ skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
     return;
   }
 
-  GST_TRACE ("Loaded %ld bytes of %ld -> %f percent of media interval %f to %f seconds",
-    (long int) bytes_loaded,
-    (long int) bytes_total,
+  GST_TRACE ("Loaded %" G_GSIZE_FORMAT " bytes of %" G_GSIZE_FORMAT " -> %f percent of media interval %" GST_TIME_FORMAT " to %" GST_TIME_FORMAT " seconds",
+    bytes_loaded,
+    bytes_total,
     percentage,
-    ((float) (start_time)) / GST_SECOND,
-    ((float) (stop_time)) / GST_SECOND
+    GST_TIME_ARGS (start_time),
+    GST_TIME_ARGS (stop_time)
   );
 
   // Post downloading message on the bus
@@ -532,18 +532,6 @@ void skippy_uri_downloader_update_downstream_events (SkippyUriDownloader *downlo
     gst_pad_send_event (sink, event);
   }
 
-  GST_DEBUG ("Checking for sticky segment event");
-  event = gst_pad_get_sticky_event (sink, GST_EVENT_SEGMENT, 0);
-  if (event) {
-    gst_event_unref (event);
-  } else {
-    GST_WARNING ("Sticky segment event not found");
-    GST_OBJECT_LOCK (downloader);
-    downloader->priv->need_segment = TRUE;
-    GST_OBJECT_UNLOCK (downloader);
-  }
-  GST_DEBUG ("Done with checking for sticky segment event");
-
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
   if (segment && G_UNLIKELY(downloader->priv->need_segment)) {
     // Create new segment event from our own segment (time format)
@@ -622,6 +610,23 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   return GST_PAD_PROBE_OK;
 }
 
+// There are cases where the downstream elements get reset and loose their segment
+// event, in this case we need to update them (called from urisrc event probe)
+void skippy_uri_downloader_check_for_sticky_segment_event (SkippyUriDownloader *downloader, GstPad *pad)
+{
+  GstPad *sink = gst_pad_get_peer (pad);
+  GstEvent *sticky_event = gst_pad_get_sticky_event (sink, GST_EVENT_SEGMENT, 0);
+  if (sticky_event) {
+    gst_event_unref (sticky_event);
+  } else {
+    GST_WARNING ("Sticky segment event not found");
+    GST_OBJECT_LOCK (downloader);
+    downloader->priv->need_segment = TRUE;
+    GST_OBJECT_UNLOCK (downloader);
+  }
+  gst_object_unref (sink);
+}
+
 // Probe events from URI src streaming thread
 // Download mutex is locked when this is called (only while fetch executes).
 static GstPadProbeReturn
@@ -635,6 +640,7 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
 
   switch (GST_EVENT_TYPE(event)) {
   case GST_EVENT_SEGMENT:
+    skippy_uri_downloader_check_for_sticky_segment_event (downloader, pad);
     // Check for current fragment download and replace event data if possible
     // Copy segment event from URI src
     gst_event_copy_segment (event, &bytes_segment);
