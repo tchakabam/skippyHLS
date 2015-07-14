@@ -589,22 +589,25 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
   srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
-  GST_OBJECT_LOCK (demux);
-  demux->srcpad = srcpad;
-  GST_OBJECT_UNLOCK (demux);
+
   // Cleanup
   gst_object_unref (templ);
   gst_object_unref (queue_srcpad);
   // Configure external source pad
-  gst_pad_set_active (demux->srcpad, TRUE);
+  gst_pad_set_active (srcpad, TRUE);
   // Set event & query handlers for downstream pads
-  gst_pad_set_event_function (demux->srcpad,
+  gst_pad_set_event_function (srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_event));
-  gst_pad_set_query_function (demux->srcpad,
+  gst_pad_set_query_function (srcpad,
       GST_DEBUG_FUNCPTR (skippy_hls_demux_src_query));
   // Add pad to element
-  gst_element_add_pad (GST_ELEMENT (demux), demux->srcpad);
+  gst_element_add_pad (GST_ELEMENT (demux), srcpad);
   gst_element_no_more_pads (GST_ELEMENT (demux));
+  // Only set this once the pad is fully set up
+  GST_OBJECT_LOCK (demux);
+  demux->srcpad = srcpad;
+  GST_OBJECT_UNLOCK (demux);
+
   GST_DEBUG ("Added src pad");
 }
 
@@ -994,7 +997,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     GST_OBJECT_UNLOCK (demux);
     GST_TRACE ("No src pad yet");
     // Just sleep a bit before trying again
-    g_usleep (100);
+    g_usleep (10*1000);
     return FALSE;
   }
 
