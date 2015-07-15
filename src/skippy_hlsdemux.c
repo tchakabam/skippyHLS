@@ -41,8 +41,9 @@
 #define BUFFER_WATERMARK_LOW_RATIO 0.5
 
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
+#define MIN_BUFFER_DURATION (10*GST_SECOND)
 
-static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
+static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
@@ -83,6 +84,7 @@ static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demu
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux);
 static void skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
+static GstClockTime skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux);
 
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
@@ -261,8 +263,10 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     g_object_set (demux->queue,
       "max-size-buffers", 0,
       "max-size-bytes", 0,
-      "max-size-time", 0,
-      "use-buffering", FALSE,
+      "max-size-time", skippy_hls_demux_get_max_buffer_duration (demux) + (1*GST_SECOND),
+      "use-buffering", TRUE,
+      "high-percent", 2, // Should never equal or exceed 50% otherwise we would deadlock (limiting ourselves below the threshold)
+      "low-percent", 1,
       NULL);
     GST_OBJECT_LOCK (demux);
   }
@@ -588,7 +592,7 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->queue, "src");
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
-  srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
+  srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
 
   // Cleanup
   gst_object_unref (templ);
@@ -871,7 +875,9 @@ skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
     gst_object_unref (parent);
   }
 
-  GST_DEBUG ("Max buffer duration: %" GST_TIME_FORMAT, GST_TIME_ARGS (res));
+  if (res < MIN_BUFFER_DURATION) {
+    res = MIN_BUFFER_DURATION;
+  }
 
   return res;
 }
@@ -1014,11 +1020,11 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
   pos = skippy_hls_demux_query_position (demux);
   max_buffer_duration = skippy_hls_demux_get_max_buffer_duration (demux);
 
-  GST_TRACE ("Position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT,
-    GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration));
+  GST_DEBUG ("Playback position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT ", Queued position is %" GST_TIME_FORMAT,
+    GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position));
 
   // Check for wether we should limit downloading
-  if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE && pos >= 2*RETRY_TIME_BASE
+  if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE
     && demux->position > pos + max_buffer_duration) {
     // Diff' between current playhead and buffer-head in microseconds
     max_wait = demux->position - pos - max_buffer_duration;
@@ -1117,7 +1123,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       fragment->download_stop_time - fragment->download_start_time, fragment->size);
     // Reset failure counter, position and scheduling condition
     GST_OBJECT_LOCK (demux);
-    demux->position = fragment->start_time;
+    demux->position = fragment->stop_time;
     demux->download_failed_count = 0;
     demux->continuing = FALSE;
     GST_OBJECT_UNLOCK (demux);
@@ -1134,6 +1140,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     time_until_retry = skippy_hls_demux_get_time_until_retry (demux);
     GST_DEBUG ("Next retry scheduled in: %" GST_TIME_FORMAT, GST_TIME_ARGS (time_until_retry));
     // Waits before retrying - might be interrupted by a PAUSED -> PLAYING transition or by a seek event
+    demux->continuing = FALSE;
     skippy_hls_stream_loop_wait_locked (demux, time_until_retry);
     // If there was an error we should not schedule but retry right away
     demux->continuing = TRUE;
