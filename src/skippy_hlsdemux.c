@@ -168,7 +168,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->playlist = NULL; // Storage for initial playlist
 
   // Internal elements
-  demux->download_queue = gst_element_factory_make ("queue", NULL);
+  demux->download_queue = gst_element_factory_make ("queue2", NULL);
   demux->buffer_queue = gst_element_factory_make ("queue2", NULL);
   demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
   demux->downloader = skippy_uri_downloader_new ();
@@ -264,7 +264,7 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     // Buffering queue has 32 KBytes
     g_object_set (demux->buffer_queue,
       "max-size-buffers", 0,
-      "max-size-bytes", 32*1024,
+      "max-size-bytes", 16*1024,
       "max-size-time", 0,
       "use-buffering", TRUE,
       "high-percent", 99, // Should never equal or exceed 50% otherwise we would deadlock (limiting ourselves below the threshold)
@@ -279,7 +279,8 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     g_object_set (demux->download_queue,
       "max-size-buffers", 0,
       "max-size-bytes", 0,
-      "max-size-time", 0,
+      "max-size-time", 6*3600*GST_SECOND,
+      "use-buffering", FALSE,
       NULL);
     GST_OBJECT_LOCK (demux);
   }
@@ -795,7 +796,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
   GstClockTime duration;
   gchar* uri;
 
-  GST_DEBUG ("Got %" GST_PTR_FORMAT, query);
+  GST_TRACE ("Got %" GST_PTR_FORMAT, query);
 
   if (query == NULL)
     return FALSE;
@@ -1030,6 +1031,8 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     return FALSE;
   }
 
+  monitor_queue_levels (demux);
+
   // Check if wait condition is enabled - if not we can just continue
   if (demux->continuing) {
     GST_OBJECT_UNLOCK (demux);
@@ -1037,8 +1040,6 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     return TRUE;
   }
   GST_OBJECT_UNLOCK (demux);
-
-  monitor_queue_levels (demux);
 
   // Check upfront position relative to stream position
   // If we branch here this means we might want to wait
