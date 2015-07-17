@@ -443,21 +443,16 @@ skippy_uri_downloader_handle_data_segment (SkippyUriDownloader* downloader, cons
 // Handles errors from message bus sync handler of URI src (runs in it's streaming thread)
 // Download mutex is locked when this is called (only while fetch executes).
 static void
-skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader, GstMessage* message)
+skippy_uri_downloader_handle_error (SkippyUriDownloader *downloader, GError* err)
 {
-  GError *err = NULL;
-
   // Set current error if not yet set (if there are several recurrent errors we will only store the first one)
   if (downloader->priv->err) {
     return;
   }
-  gst_message_parse_error (message, &err, NULL);
   downloader->priv->err = err;
 
   // Log error
-  GST_INFO_OBJECT (downloader,
-      "URI source error: '%s' from %s, the download will be cancelled",
-      err->message, GST_OBJECT_NAME (message->src));
+  GST_INFO_OBJECT (downloader, "Downloader error: '%s', the download will be cancelled", err->message);
 
   // Cancel ongoing download
   skippy_uri_downloader_cancel (downloader);
@@ -474,7 +469,7 @@ skippy_uri_downloader_handle_warning (SkippyUriDownloader *downloader,
 
   gst_message_parse_warning (message, &err, &dbg_info);
   GST_WARNING_OBJECT (downloader,
-      "Received warning: %s from %s",
+      "Downloader warning: %s from %s",
       GST_OBJECT_NAME (message->src), err->message);
   GST_DEBUG ("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
   g_error_free (err);
@@ -483,41 +478,31 @@ skippy_uri_downloader_handle_warning (SkippyUriDownloader *downloader,
 
 static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * message)
 {
+  GError *err = NULL;
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (bin);
 
-  GST_LOG ("Got %" GST_PTR_FORMAT, message);
+  GST_DEBUG ("Got %" GST_PTR_FORMAT, message);
 
   // Download mutex is locked when this is called (only while fetch executes).
-  if (GST_MESSAGE_SRC (message) == GST_OBJECT (downloader->priv->urisrc)) {
-    if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
+  if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
 
-      skippy_uri_downloader_handle_error (downloader, message);
-      gst_message_unref (message);
-
-    } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_WARNING) {
-
-      skippy_uri_downloader_handle_warning (downloader, message);
-      gst_message_unref (message);
-
-    } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
-
-      // Only forward custom 'element' messages from URI src
-      GST_BIN_CLASS (skippy_uri_downloader_parent_class)->handle_message (bin, message);
-
-    } else {
-      // Handle any other message (mostly state-changed notifications)
-    }
-
-  // Any other message (not directly from the URI src)
-  } else {
-
-    // We swallow any other error messages
-    if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
-      gst_message_unref (message);
-      GST_ERROR ("Swallowed error from internal element");
+    gst_message_parse_error (message, &err, NULL);
+    if (! (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)
+      || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND) )) {
+      g_error_free (err);
       return;
     }
 
+    skippy_uri_downloader_handle_error (downloader, err);
+    gst_message_unref (message);
+
+  } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_WARNING) {
+
+    skippy_uri_downloader_handle_warning (downloader, message);
+    gst_message_unref (message);
+
+  } else {
+    // Handle any other message (mostly state-changed notifications)
     GST_BIN_CLASS (skippy_uri_downloader_parent_class)->handle_message (bin, message);
   }
 }
