@@ -43,7 +43,7 @@
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
 
-static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src",
+static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
@@ -122,6 +122,7 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
 {
   GObjectClass *gobject_class;
   GstElementClass *element_class;
+  GstBinClass *bin_class;
 
   gobject_class = (GObjectClass *) klass;
   element_class = (GstElementClass *) klass;
@@ -261,14 +262,18 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
   // Configure our queues
   if (demux->buffer_queue) {
     GST_OBJECT_UNLOCK (demux);
-    // Buffering queue has 32 KBytes
+    // Buffering queue
     g_object_set (demux->buffer_queue,
       "max-size-buffers", 0,
-      "max-size-bytes", 16*1024,
-      "max-size-time", 0,
-      "use-buffering", TRUE,
-      "high-percent", 99, // Should never equal or exceed 50% otherwise we would deadlock (limiting ourselves below the threshold)
+      "max-size-bytes", 0,
+      "max-size-time", 6*3600*GST_SECOND,
+      "use-buffering", FALSE,
+      //"min-threshold-bytes", 15*16*1024,
+      /*
+      "use-buffering", FALSE,
+      "high-percent", 90,
       "low-percent", 10,
+      */
       NULL);
     GST_OBJECT_LOCK (demux);
   }
@@ -607,7 +612,7 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   templ = gst_static_pad_template_get (&srctemplate);
   queue_srcpad = gst_element_get_static_pad (demux->buffer_queue, "src");
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
-  srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
+  srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
 
   // Cleanup
   gst_object_unref (templ);
@@ -1008,8 +1013,11 @@ static void monitor_queue_levels (SkippyHLSDemux * demux)
   guint current_level_bytes;
   g_object_get (demux->buffer_queue, "current-level-bytes", &current_level_bytes, NULL);
   GST_DEBUG ("Buffer queue levels: bytes=%d", (int) current_level_bytes);
+
   g_object_get (demux->download_queue, "current-level-bytes", &current_level_bytes, NULL);
   GST_DEBUG ("Download queue levels: bytes=%d", (int) current_level_bytes);
+
+
 }
 
 // Checks wether we should download another segment with respect to buffer size.
