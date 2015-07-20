@@ -487,12 +487,6 @@ static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * mes
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
 
     gst_message_parse_error (message, &err, NULL);
-    if (! (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)
-      || g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND) )) {
-      g_error_free (err);
-      return;
-    }
-
     skippy_uri_downloader_handle_error (downloader, err);
     gst_message_unref (message);
 
@@ -501,9 +495,12 @@ static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * mes
     skippy_uri_downloader_handle_warning (downloader, message);
     gst_message_unref (message);
 
-  } else {
+  } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
     // Handle any other message (mostly state-changed notifications)
     GST_BIN_CLASS (skippy_uri_downloader_parent_class)->handle_message (bin, message);
+  }
+  else {
+    gst_message_unref (message);
   }
 }
 
@@ -805,10 +802,12 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     GST_DEBUG ("Unsetting URI source");
 
     // Flush start
-    GST_DEBUG_OBJECT (downloader, "Sending flush start");
-    gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
-    GST_DEBUG_OBJECT (downloader, "Sending flush stop");
-    gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_stop (TRUE));
+    if (!downloader->priv->err) {
+      GST_DEBUG_OBJECT (downloader, "Sending flush start");
+      gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
+      GST_DEBUG_OBJECT (downloader, "Sending flush stop");
+      gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_stop (TRUE));
+    }
 
     // Now we can shut down the element
     GST_DEBUG ("Setting source element to READY state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));

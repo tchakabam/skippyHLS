@@ -169,15 +169,10 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->playlist = NULL; // Storage for initial playlist
 
   // Internal elements
-  demux->download_queue = gst_element_factory_make ("queue2", NULL);
-  demux->buffer_queue = gst_element_factory_make ("queue2", NULL);
-  demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
   demux->downloader = skippy_uri_downloader_new ();
   demux->playlist_downloader = skippy_uri_downloader_new ();
 
   // Add bin elements
-  gst_bin_add (GST_BIN (demux), demux->download_queue);
-  gst_bin_add (GST_BIN (demux), demux->buffer_queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
 
@@ -202,12 +197,6 @@ skippy_hls_demux_dispose (GObject * obj)
   if (demux->client) {
     skippy_m3u8_client_free (demux->client);
     demux->client = NULL;
-  }
-
-  // Release ref to queue sinkpad
-  if (demux->queue_sinkpad) {
-    g_object_unref (demux->queue_sinkpad);
-    demux->queue_sinkpad = NULL;
   }
 
   // Clean up thread
@@ -258,38 +247,6 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     GST_OBJECT_LOCK (demux);
     demux->srcpad = NULL;
   }
-
-  // Configure our queues
-  if (demux->buffer_queue) {
-    GST_OBJECT_UNLOCK (demux);
-    // Buffering queue
-    g_object_set (demux->buffer_queue,
-      "max-size-buffers", 0,
-      "max-size-bytes", 0,
-      "max-size-time", 6*3600*GST_SECOND,
-      "use-buffering", FALSE,
-      //"min-threshold-bytes", 15*16*1024,
-      /*
-      "use-buffering", FALSE,
-      "high-percent", 90,
-      "low-percent", 10,
-      */
-      NULL);
-    GST_OBJECT_LOCK (demux);
-  }
-
-  if (demux->download_queue) {
-    GST_OBJECT_UNLOCK (demux);
-    // Download queue is unlimited
-    g_object_set (demux->download_queue,
-      "max-size-buffers", 0,
-      "max-size-bytes", 0,
-      "max-size-time", 6*3600*GST_SECOND,
-      "use-buffering", FALSE,
-      NULL);
-    GST_OBJECT_LOCK (demux);
-  }
-
   GST_OBJECT_UNLOCK (demux);
 }
 
@@ -389,7 +346,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
     // Start streaming thread
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       // This is initially starting the task
-      gst_task_start (demux->stream_task);
+      //gst_task_start (demux->stream_task);
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       skippy_hls_demux_restart (demux);
@@ -579,6 +536,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
 
   skippy_hls_demux_link_pads (demux);
+  gst_task_start (demux->stream_task);
 
 error:
   g_free (uri);
@@ -591,7 +549,7 @@ error:
 static void
 skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
 {
-  GstPad *queue_srcpad, *downloader_srcpad, *srcpad;
+  GstPad *downloader_srcpad, *srcpad;
   GstPadTemplate* templ;
 
   GST_DEBUG ("Linking pads...");
@@ -602,21 +560,15 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
     GST_WARNING ("No src pad on downloader found yet");
     return;
   }
-  gst_object_unref (downloader_srcpad);
+  
+  GST_DEBUG ("Linked downloader to goast pad");
 
-  // Link the downloader with the queues
-  gst_element_link_many (GST_ELEMENT(demux->downloader), demux->download_queue, demux->buffer_queue, NULL);
-  GST_DEBUG ("Linked downloader to queues");
-
-  // Link queue src with external src pad (ghost pad)
   templ = gst_static_pad_template_get (&srctemplate);
-  queue_srcpad = gst_element_get_static_pad (demux->buffer_queue, "src");
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
-  srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
-
+  srcpad = gst_ghost_pad_new_from_template ("src_0", downloader_srcpad, templ);
   // Cleanup
+  gst_object_unref (downloader_srcpad);
   gst_object_unref (templ);
-  gst_object_unref (queue_srcpad);
   // Configure external source pad
   gst_pad_set_active (srcpad, TRUE);
   // Set event & query handlers for downstream pads
@@ -770,13 +722,13 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
     GST_DEBUG_OBJECT (demux, "Sending flush start");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
+    gst_pad_send_event (demux->srcpad, gst_event_new_flush_start ());
   }
 
   // Flush stop
   if (flags & GST_SEEK_FLAG_FLUSH) {
     GST_DEBUG_OBJECT (demux, "Sending flush stop");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
+    gst_pad_send_event (demux->srcpad, gst_event_new_flush_stop (TRUE));
   }
 
   // Restart the streaming task
@@ -865,7 +817,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
   // Send EOS event
-  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
+  gst_pad_send_event (demux->srcpad, gst_event_new_eos ());
 }
 
 // Simply wraps caching allowed flag of M3U8 manifest to eventually add custom policy
@@ -1008,17 +960,6 @@ skippy_hls_stream_loop_wait_locked (SkippyHLSDemux * demux, GstClockTime max_wai
   GST_TRACE ("Continuing stream task now");
 }
 
-static void monitor_queue_levels (SkippyHLSDemux * demux)
-{
-  guint current_level_bytes;
-  g_object_get (demux->buffer_queue, "current-level-bytes", &current_level_bytes, NULL);
-  GST_DEBUG ("Buffer queue levels: bytes=%d", (int) current_level_bytes);
-
-  g_object_get (demux->download_queue, "current-level-bytes", &current_level_bytes, NULL);
-  GST_DEBUG ("Download queue levels: bytes=%d", (int) current_level_bytes);
-
-
-}
 
 // Checks wether we should download another segment with respect to buffer size.
 // Only runs in the streaming thread.
@@ -1039,7 +980,6 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
     return FALSE;
   }
 
-  monitor_queue_levels (demux);
 
   // Check if wait condition is enabled - if not we can just continue
   if (demux->continuing) {
@@ -1085,7 +1025,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyFragment *fragment = NULL;
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
-  guint queue_level;
   gchar* referrer_uri = NULL;
   gboolean playlist_refresh = FALSE;
   GstClockTime time_until_retry;
@@ -1126,7 +1065,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   // This case means the download did not do anything
   case SKIPPY_URI_DOWNLOADER_VOID:
     // Error & fragment should be NULL
-    skippy_hls_handle_end_of_playlist (demux);
+    //skippy_hls_handle_end_of_playlist (demux);
     break;
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
     GST_DEBUG ("Fragment fetch got cancelled on purpose");
@@ -1142,6 +1081,9 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     // We only want to refetch the playlist if we get a 403 or a 404
     if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
       GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
+      //TODO: mipesic - what if refresh playlist operation fails - in current implementation we will
+      //continue with fetching expired segment over and over again. We can do something with return code
+      //of refresh playlist operation to prevent that.
       skippy_hls_demux_refresh_playlist (demux);
       playlist_refresh = TRUE;
     }
