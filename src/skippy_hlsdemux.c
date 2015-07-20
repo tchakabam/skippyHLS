@@ -560,7 +560,7 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
     GST_WARNING ("No src pad on downloader found yet");
     return;
   }
-  
+
   GST_DEBUG ("Linked downloader to goast pad");
 
   templ = gst_static_pad_template_get (&srctemplate);
@@ -817,7 +817,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
   // Send EOS event
-  gst_pad_send_event (demux->srcpad, gst_event_new_eos ());
+  gst_pad_push_event (demux->srcpad, gst_event_new_eos ());
 }
 
 // Simply wraps caching allowed flag of M3U8 manifest to eventually add custom policy
@@ -1065,7 +1065,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   // This case means the download did not do anything
   case SKIPPY_URI_DOWNLOADER_VOID:
     // Error & fragment should be NULL
-    //skippy_hls_handle_end_of_playlist (demux);
+    skippy_hls_handle_end_of_playlist (demux);
     break;
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
     GST_DEBUG ("Fragment fetch got cancelled on purpose");

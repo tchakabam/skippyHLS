@@ -612,7 +612,7 @@ void skippy_uri_downloader_check_for_sticky_segment_event (SkippyUriDownloader *
   if (sticky_event) {
     gst_event_unref (sticky_event);
   } else {
-    GST_WARNING ("Sticky segment event not found");
+    GST_DEBUG ("Sticky segment event not found");
     GST_OBJECT_LOCK (downloader);
     downloader->priv->need_segment = TRUE;
     GST_OBJECT_UNLOCK (downloader);
