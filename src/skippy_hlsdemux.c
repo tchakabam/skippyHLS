@@ -170,6 +170,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
 
   // Internal elements
   demux->download_queue = gst_element_factory_make ("queue2", NULL);
+  demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
   demux->downloader = skippy_uri_downloader_new ();
   demux->playlist_downloader = skippy_uri_downloader_new ();
 
@@ -740,13 +741,13 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
     GST_DEBUG_OBJECT (demux, "Sending flush start");
-    gst_pad_send_event (demux->srcpad, gst_event_new_flush_start ());
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
   }
 
   // Flush stop
   if (flags & GST_SEEK_FLAG_FLUSH) {
     GST_DEBUG_OBJECT (demux, "Sending flush stop");
-    gst_pad_send_event (demux->srcpad, gst_event_new_flush_stop (TRUE));
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
   }
 
   // Restart the streaming task
@@ -835,7 +836,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
   // Send EOS event
-  gst_pad_push_event (demux->srcpad, gst_event_new_eos ());
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
 }
 
 // Simply wraps caching allowed flag of M3U8 manifest to eventually add custom policy
