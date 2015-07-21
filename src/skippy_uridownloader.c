@@ -805,6 +805,10 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     if (!downloader->priv->err) {
       GST_DEBUG_OBJECT (downloader, "Sending flush start");
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
+
+      GST_DEBUG ("Setting source element to PAUSED state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
+      gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
+
       GST_DEBUG_OBJECT (downloader, "Sending flush stop");
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_stop (TRUE));
     }
