@@ -169,10 +169,12 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->playlist = NULL; // Storage for initial playlist
 
   // Internal elements
+  demux->download_queue = gst_element_factory_make ("queue2", NULL);
   demux->downloader = skippy_uri_downloader_new ();
   demux->playlist_downloader = skippy_uri_downloader_new ();
 
   // Add bin elements
+  gst_bin_add (GST_BIN (demux), demux->download_queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
 
@@ -197,6 +199,12 @@ skippy_hls_demux_dispose (GObject * obj)
   if (demux->client) {
     skippy_m3u8_client_free (demux->client);
     demux->client = NULL;
+  }
+
+  // Release ref to queue sinkpad
+  if (demux->queue_sinkpad) {
+    g_object_unref (demux->queue_sinkpad);
+    demux->queue_sinkpad = NULL;
   }
 
   // Clean up thread
@@ -238,6 +246,18 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
   if (demux->playlist) {
     gst_buffer_unref (demux->playlist);
     demux->playlist = NULL;
+  }
+
+  if (demux->download_queue) {
+    GST_OBJECT_UNLOCK (demux);
+    // Download queue is unlimited
+    g_object_set (demux->download_queue,
+      "max-size-buffers", 0,
+      "max-size-bytes", 0,
+      "max-size-time", 6*3600*GST_SECOND,
+      "use-buffering", FALSE,
+    NULL);
+    GST_OBJECT_LOCK (demux);
   }
 
   // We might already have a source pad from a previous PLAYING state, clean up if necessary
@@ -346,7 +366,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
     // Start streaming thread
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       // This is initially starting the task
-      //gst_task_start (demux->stream_task);
+      gst_task_start (demux->stream_task);
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       skippy_hls_demux_restart (demux);
@@ -536,7 +556,6 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
 
   skippy_hls_demux_link_pads (demux);
-  gst_task_start (demux->stream_task);
 
 error:
   g_free (uri);
@@ -549,26 +568,25 @@ error:
 static void
 skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
 {
-  GstPad *downloader_srcpad, *srcpad;
+  GstPad *queue_srcpad, *srcpad;
   GstPadTemplate* templ;
 
   GST_DEBUG ("Linking pads...");
 
   // Link downloader -> queue
-  downloader_srcpad = gst_element_get_static_pad (GST_ELEMENT(demux->downloader), "src");
-  if (!downloader_srcpad) {
-    GST_WARNING ("No src pad on downloader found yet");
-    return;
-  }
+  queue_srcpad = gst_element_get_static_pad (demux->download_queue, "src");
 
-  GST_DEBUG ("Linked downloader to goast pad");
+  gst_element_link (GST_ELEMENT(demux->downloader), demux->download_queue);
+
+  GST_DEBUG ("Linked downloader->queue->ghost-pad");
 
   templ = gst_static_pad_template_get (&srctemplate);
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
-  srcpad = gst_ghost_pad_new_from_template ("src_0", downloader_srcpad, templ);
+  srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
   // Cleanup
-  gst_object_unref (downloader_srcpad);
+  gst_object_unref (queue_srcpad);
   gst_object_unref (templ);
+
   // Configure external source pad
   gst_pad_set_active (srcpad, TRUE);
   // Set event & query handlers for downstream pads

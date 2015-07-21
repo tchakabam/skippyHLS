@@ -481,7 +481,7 @@ static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * mes
   GError *err = NULL;
   SkippyUriDownloader *downloader = SKIPPY_URI_DOWNLOADER (bin);
 
-  GST_DEBUG ("Got %" GST_PTR_FORMAT, message);
+  //GST_DEBUG ("Got %" GST_PTR_FORMAT, message);
 
   // Download mutex is locked when this is called (only while fetch executes).
   if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ERROR) {
@@ -498,8 +498,7 @@ static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * mes
   } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
     // Handle any other message (mostly state-changed notifications)
     GST_BIN_CLASS (skippy_uri_downloader_parent_class)->handle_message (bin, message);
-  }
-  else {
+  } else {
     gst_message_unref (message);
   }
 }
