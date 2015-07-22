@@ -60,6 +60,7 @@ struct _SkippyUriDownloaderPrivate
   gboolean set_uri;
   gboolean fetching;
   gboolean need_segment, need_stream_start, got_segment;
+  guint stream_start_cnt;
 
   gsize bytes_loaded;
   gsize bytes_total;
@@ -219,6 +220,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   }
 
   downloader->priv->got_segment = FALSE;
+  downloader->priv->stream_start_cnt = 0;
 
   // Clear error when present
   g_clear_error (&downloader->priv->err);
@@ -638,9 +640,17 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
     gst_event_copy_segment (event, &bytes_segment);
     // Reset bytes counter & update our time segment
     skippy_uri_downloader_handle_data_segment (downloader, &bytes_segment);
+    downloader->priv->stream_start_cnt = 0;
     return GST_PAD_PROBE_DROP;
   case GST_EVENT_EOS:
     skippy_uri_downloader_handle_eos (downloader);
+    return GST_PAD_PROBE_DROP;
+  case GST_EVENT_STREAM_START:
+    if (downloader->priv->stream_start_cnt > 7) {
+      GST_ERROR ("Too many stream-start events before actual data, cancelled");
+      //skippy_uri_downloader_cancel (downloader);
+    }
+    downloader->priv->stream_start_cnt++;
     return GST_PAD_PROBE_DROP;
   case GST_EVENT_CAPS:
     // Update stream start event before we pass on a caps event here

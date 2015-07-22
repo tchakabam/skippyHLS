@@ -169,12 +169,14 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->playlist = NULL; // Storage for initial playlist
 
   // Internal elements
-  demux->download_queue = gst_element_factory_make ("queue2", NULL);
+  demux->buffer_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-buffer-queue");
+  demux->download_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-download-queue");
   demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
   demux->downloader = skippy_uri_downloader_new ();
   demux->playlist_downloader = skippy_uri_downloader_new ();
 
   // Add bin elements
+  gst_bin_add (GST_BIN (demux), demux->buffer_queue);
   gst_bin_add (GST_BIN (demux), demux->download_queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
@@ -257,6 +259,18 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
       "max-size-bytes", 0,
       "max-size-time", 6*3600*GST_SECOND,
       "use-buffering", FALSE,
+    NULL);
+    GST_OBJECT_LOCK (demux);
+  }
+
+  if (demux->buffer_queue) {
+    GST_OBJECT_UNLOCK (demux);
+    // Download queue is unlimited
+    g_object_set (demux->download_queue,
+      "max-size-buffers", 0,
+      "max-size-bytes", 32 * 1024,
+      "max-size-time", 0,
+      "use-buffering", TRUE,
     NULL);
     GST_OBJECT_LOCK (demux);
   }
@@ -575,15 +589,16 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   GST_DEBUG ("Linking pads...");
 
   // Link downloader -> queue
-  queue_srcpad = gst_element_get_static_pad (demux->download_queue, "src");
+  queue_srcpad = gst_element_get_static_pad (demux->buffer_queue, "src");
 
-  gst_element_link (GST_ELEMENT(demux->downloader), demux->download_queue);
+  gst_element_link_many (GST_ELEMENT(demux->downloader),
+    demux->download_queue, demux->buffer_queue, NULL);
 
-  GST_DEBUG ("Linked downloader->queue->ghost-pad");
+  GST_DEBUG ("Linked downloader -> download-queue -> buffer-queue -> ghostpad");
 
   templ = gst_static_pad_template_get (&srctemplate);
   // Set our srcpad reference (NOTE: gst_ghost_pad_new_from_template locks the element eventually don't call inside locked block)
-  srcpad = gst_ghost_pad_new_from_template ("src_0", queue_srcpad, templ);
+  srcpad = gst_ghost_pad_new_from_template ("src", queue_srcpad, templ);
   // Cleanup
   gst_object_unref (queue_srcpad);
   gst_object_unref (templ);

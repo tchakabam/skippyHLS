@@ -64,7 +64,7 @@ struct _SkippyHLSDemux
   GstPad *queue_sinkpad;
 
   /* Member objects */
-  GstElement *download_queue;
+  GstElement *download_queue, *buffer_queue;
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;
   SkippyUriDownloader *playlist_downloader;
