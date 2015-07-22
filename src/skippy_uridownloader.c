@@ -497,11 +497,9 @@ static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * mes
     skippy_uri_downloader_handle_warning (downloader, message);
     gst_message_unref (message);
 
-  } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_ELEMENT) {
+  } else {
     // Handle any other message (mostly state-changed notifications)
     GST_BIN_CLASS (skippy_uri_downloader_parent_class)->handle_message (bin, message);
-  } else {
-    gst_message_unref (message);
   }
 }
 
@@ -885,11 +883,13 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
     return SKIPPY_URI_DOWNLOADER_FAILED;
   }
 
+#if 0
   // If we were interrupted previously, resume at this point
   if (downloader->priv->previous_was_interrupted) {
     fragment->range_start = downloader->priv->bytes_loaded + 1;
     fragment->range_end = downloader->priv->bytes_total;
   }
+#endif
 
   // Setup URL & range
   if (! (skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)
