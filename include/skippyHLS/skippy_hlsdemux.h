@@ -64,6 +64,9 @@ struct _SkippyHLSDemux
   GstPad *queue_sinkpad;
 
   /* Member objects */
+  gboolean need_segment, need_stream_start;
+  GstSegment segment;
+  GstCaps *caps;
   GstElement *download_queue, *buffer_queue;
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;

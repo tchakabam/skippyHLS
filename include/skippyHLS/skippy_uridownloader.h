@@ -73,8 +73,6 @@ SkippyUriDownloader * skippy_uri_downloader_new ();
 void skippy_uri_downloader_prepare (SkippyUriDownloader * downloader, gchar* uri);
 SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,
 	const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
-void skippy_uri_downloader_set_segment (SkippyUriDownloader * downloader, GstSegment segment);
-GstSegment skippy_uri_downloader_get_segment (SkippyUriDownloader * downloader);
 GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader);
 
 void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader);
