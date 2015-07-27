@@ -390,11 +390,11 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
     // Interrupt streaming thread
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       // Can be called while streaming thread is running
-      skippy_hls_demux_pause (demux);
       break;
     // Shut down
     case GST_STATE_CHANGE_READY_TO_NULL:
       // Will only be called after streaming thread was paused
+      skippy_hls_demux_pause (demux);
       skippy_hls_demux_stop (demux);
       break;
     default:
@@ -1025,6 +1025,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
       ret = FALSE;
       break;
     }
+    demux->need_segment = TRUE;
     ret = TRUE;
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:

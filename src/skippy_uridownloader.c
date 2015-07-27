@@ -55,6 +55,7 @@ struct _SkippyUriDownloaderPrivate
   GCond cond;
   GMutex download_lock;
 
+  gboolean flushing;
   gboolean previous_was_interrupted;
   gboolean set_uri;
   gboolean fetching;
@@ -213,6 +214,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   }
 
   downloader->priv->got_segment = FALSE;
+  downloader->priv->flushing = FALSE;
 
   // Clear error when present
   g_clear_error (&downloader->priv->err);
@@ -487,8 +489,8 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
    */
 
   // There was an error downloading, quit quietly
-  if (downloader->priv->err) {
-    GST_WARNING ("Detected error, dropping item");
+  if (downloader->priv->err || downloader->priv->flushing) {
+    GST_WARNING ("Error or flushing, dropping buffer");
     return GST_PAD_PROBE_DROP;
   }
 
@@ -547,6 +549,7 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
     return GST_PAD_PROBE_DROP;
   case GST_EVENT_CAPS:
     GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
+    return GST_PAD_PROBE_OK;
   default:
     return GST_PAD_PROBE_OK;
   }
@@ -700,14 +703,17 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     GstPad* urisrcpad;
     GST_DEBUG ("Unsetting URI source");
 
+    gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
+
     // Flush only if download got cancelled
     if (downloader->priv->fragment->cancelled) {
       GST_DEBUG_OBJECT (downloader, "Sending flush start");
 
-      GstSegment segment;
-      gst_segment_init (&segment, GST_FORMAT_BYTES);
+      //GstSegment segment;
+      //gst_segment_init (&segment, GST_FORMAT_BYTES);
+      //gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_segment (&segment));
 
-      gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_segment (&segment));
+      downloader->priv->flushing = TRUE;
 
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
 
