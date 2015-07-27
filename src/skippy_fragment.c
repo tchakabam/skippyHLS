@@ -36,7 +36,7 @@
 #include <gst/base/gsttypefindhelper.h>
 #include <gst/base/gstadapter.h>
 
-#include <skippyHLS/skippy_fragment.h>
+#include "skippyHLS/skippy_fragment.h"
 
 #define SKIPPY_FRAGMENT_GET_PRIVATE(obj) (G_TYPE_INSTANCE_GET_PRIVATE ((obj), TYPE_SKIPPY_FRAGMENT, SkippyFragmentPrivate))
 

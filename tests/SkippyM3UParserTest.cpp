@@ -3,7 +3,7 @@
 #include <fstream>
 #include <glib-object.h>
 
-#include <skippyHLS/SkippyM3UParser.hpp>
+#include "skippyHLS/SkippyM3UParser.hpp"
 
 #define LOG(...) g_message(__VA_ARGS__)
 

@@ -2,10 +2,10 @@
 #include <mutex>
 #include <string.h> // for memcpy
 
-#include <skippyHLS/skippy_m3u8.h>
-#include <skippyHLS/skippy_fragment.h>
+#include "skippyHLS/skippy_m3u8.h"
+#include "skippyHLS/skippy_fragment.h"
 
-#include <skippyHLS/SkippyM3UParser.hpp>
+#include "skippyHLS/SkippyM3UParser.hpp"
 
 GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define GST_CAT_DEFAULT skippy_m3u8_debug

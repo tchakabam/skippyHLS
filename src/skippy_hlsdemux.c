@@ -30,7 +30,7 @@
 #include <string.h>
 #include <math.h>
 
-#include <skippyHLS/skippy_hlsdemux.h>
+#include "skippyHLS/skippy_hlsdemux.h"
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
 #define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
