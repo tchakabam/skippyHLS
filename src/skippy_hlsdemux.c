@@ -270,12 +270,10 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
   if (demux->buffer_queue) {
     GST_OBJECT_UNLOCK (demux);
     // Download queue is unlimited
-    g_object_set (demux->download_queue,
+    g_object_set (demux->buffer_queue,
       "max-size-buffers", 0,
       "max-size-bytes", 2*16*1024,
       "max-size-time", 6*3600*GST_SECOND,
-      "low-percent", 0,
-      "high-percent", 50,
       "use-buffering", FALSE,
     NULL);
     GST_OBJECT_LOCK (demux);
@@ -644,7 +642,6 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_buffer (GstPad *pad, GstPad
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (user_data);
   GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
-  guint queue_level;
 
   if (demux->need_segment) {
     GST_LOG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
@@ -654,10 +651,6 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_buffer (GstPad *pad, GstPad
   }
 
   //GST_TRACE ("Got buffer: %d", (int) gst_buffer_get_size(buffer));
-
-  g_object_get (demux->buffer_queue, "current-level-buffers", &queue_level, NULL);
-
-  GST_TRACE ("Current queue level: %d", (int) queue_level);
 
   skippy_hls_demux_update_downstream_events (demux, TRUE, TRUE);
 
