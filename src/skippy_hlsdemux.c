@@ -301,13 +301,7 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
 static void
 skippy_hls_demux_restart (SkippyHLSDemux * demux)
 {
-  // If we are already paused, this is just about restarting
-  if (gst_task_get_state (demux->stream_task) == GST_TASK_PAUSED) {
-    gst_task_start (demux->stream_task);
-    return;
-  }
-
-  // Other case is if we want to interrupt a currently ongoing waiting for retrial
+  // If we want to interrupt a currently ongoing waiting for retrial
   // in which case we are running but want to interrupt waiting, resetting the count and
   // restart immediatly
   GST_OBJECT_LOCK (demux);
@@ -377,11 +371,12 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
     // Interrupt streaming thread
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       // Can be called while streaming thread is running
-      skippy_hls_demux_pause (demux);
+
       break;
     // Shut down
     case GST_STATE_CHANGE_READY_TO_NULL:
       // Will only be called after streaming thread was paused
+      skippy_hls_demux_pause (demux);
       skippy_hls_demux_stop (demux);
       break;
     default:

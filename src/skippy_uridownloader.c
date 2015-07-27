@@ -56,6 +56,7 @@ struct _SkippyUriDownloaderPrivate
   GCond cond;
   GMutex download_lock;
 
+  gboolean flushing;
   gboolean previous_was_interrupted;
   gboolean set_uri;
   gboolean fetching;
@@ -219,6 +220,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   }
 
   downloader->priv->got_segment = FALSE;
+  downloader->priv->flushing = FALSE;
 
   // Clear error when present
   g_clear_error (&downloader->priv->err);
@@ -557,7 +559,7 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
    */
 
   // There was an error downloading, quit quietly
-  if (downloader->priv->err) {
+  if (downloader->priv->err || downloader->priv->flushing) {
     GST_WARNING ("Detected error, dropping item");
     return GST_PAD_PROBE_DROP;
   }
@@ -599,6 +601,7 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   // Make sure we are updating the pipeline with the necessary information before we push any data
   // In this case we need to check and send a segment event if needed
   skippy_uri_downloader_update_downstream_events (downloader, TRUE, TRUE);
+  GST_TRACE ("GST_PAD_PROBE_OK");
   return GST_PAD_PROBE_OK;
 }
 
@@ -801,7 +804,10 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     GST_DEBUG ("Unsetting URI source");
 
     // Flush start
-    if (!downloader->priv->err) {
+    if (downloader->priv->fragment->cancelled) {
+
+      downloader->priv->flushing = TRUE;
+
       GST_DEBUG_OBJECT (downloader, "Sending flush start");
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
 
