@@ -43,7 +43,7 @@
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
 
-static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_0",
+static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
     GST_PAD_SOMETIMES,
     GST_STATIC_CAPS_ANY);
@@ -181,8 +181,6 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
 
-  skippy_hls_demux_link_pads (demux);
-
   demux->need_segment = TRUE;
   demux->need_stream_start = TRUE;
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
@@ -274,8 +272,10 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     // Download queue is unlimited
     g_object_set (demux->download_queue,
       "max-size-buffers", 0,
-      "max-size-bytes", 1024*1024*1024,
+      "max-size-bytes", 2*16*1024,
       "max-size-time", 6*3600*GST_SECOND,
+      "low-percent", 0,
+      "high-percent", 50,
       "use-buffering", FALSE,
     NULL);
     GST_OBJECT_LOCK (demux);
@@ -569,6 +569,8 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   skippy_uri_downloader_prepare (demux->downloader, uri);
   skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
 
+  skippy_hls_demux_link_pads (demux);
+
   gst_task_start (demux->stream_task);
 
   GST_LOG ("Task started");
@@ -602,7 +604,7 @@ void skippy_hls_demux_update_downstream_events (SkippyHLSDemux *demux, gboolean 
   gchar* stream_id = NULL;
   GstEvent* event = NULL;
 
-  GST_DEBUG ("Need segment: %d / Need stream-start: %d", demux->need_segment, demux->need_stream_start);
+  //GST_DEBUG ("Need segment: %d / Need stream-start: %d", demux->need_segment, demux->need_stream_start);
 
   if (stream_start && G_UNLIKELY(demux->need_stream_start)) {
     // Sending stream start event that we got on sink pad (sticky event)
@@ -642,6 +644,7 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_buffer (GstPad *pad, GstPad
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (user_data);
   GstBuffer* buffer = GST_PAD_PROBE_INFO_BUFFER(info);
+  guint queue_level;
 
   if (demux->need_segment) {
     GST_LOG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
@@ -651,6 +654,10 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_buffer (GstPad *pad, GstPad
   }
 
   //GST_TRACE ("Got buffer: %d", (int) gst_buffer_get_size(buffer));
+
+  g_object_get (demux->buffer_queue, "current-level-buffers", &queue_level, NULL);
+
+  GST_TRACE ("Current queue level: %d", (int) queue_level);
 
   skippy_hls_demux_update_downstream_events (demux, TRUE, TRUE);
 

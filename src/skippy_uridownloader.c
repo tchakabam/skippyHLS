@@ -706,7 +706,7 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
 
     // Flush only if download got cancelled
-    if (downloader->priv->fragment->cancelled) {
+    if (downloader->priv->fragment->cancelled && !downloader->priv->err) {
       GST_DEBUG_OBJECT (downloader, "Sending flush start");
 
       //GstSegment segment;
