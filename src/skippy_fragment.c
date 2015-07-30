@@ -328,7 +328,9 @@ skippy_fragment_decrypt (SkippyFragment * fragment,
     &err
   );
   if (!key_fragment->completed) {
-    GST_ERROR ("Failed to fetch key from URI: %s (%s)", key_fragment->uri, err->message);
+  	if (err) {
+  		GST_ERROR ("Failed to fetch key from URI: %s (%s)", key_fragment->uri, err->message);
+  	}
     goto error;
   }
 
