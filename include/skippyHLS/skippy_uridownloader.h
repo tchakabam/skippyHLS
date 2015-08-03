@@ -77,4 +77,6 @@ GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader);
 
 void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader);
 
+void skippy_uri_downloader_interrupt (SkippyUriDownloader * downloader);
+
 G_END_DECLS

@@ -60,6 +60,7 @@ struct _SkippyUriDownloaderPrivate
   gboolean set_uri;
   gboolean fetching;
   gboolean got_segment;
+  gboolean download_canceled;
 
   gsize bytes_loaded;
   gsize bytes_total;
@@ -126,6 +127,7 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   // Element state flags
   downloader->priv->fetching = FALSE;
   downloader->priv->set_uri = FALSE;
+  downloader->priv->download_canceled = FALSE;
 
   // Add typefind
   downloader->priv->typefind = gst_element_factory_make ("typefind", NULL);
@@ -792,7 +794,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
     fragment->range_start = downloader->priv->bytes_loaded + 1;
     fragment->range_end = downloader->priv->bytes_total;
   }
-
+  
   // Setup URL & range
   if (! (skippy_uri_downloader_set_uri (downloader, fragment->uri, referer, compress, refresh, allow_cache)
     && skippy_uri_downloader_set_range (downloader, fragment->range_start, fragment->range_end))) {
@@ -819,13 +821,22 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
    *   - the download succeed (EOS in the src pad)
    *   - the download failed (Error message on the fetcher bus)
    */
-  while (!(fragment->cancelled || fragment->completed)) {
+  while (!(fragment->cancelled || fragment->completed || downloader->priv->download_canceled)) {
+  //while (!downloader->priv->download_done)
     // Indicate we are downloading
     downloader->priv->fetching = TRUE;
     g_cond_wait (&downloader->priv->cond, GST_OBJECT_GET_LOCK (downloader));
     GST_DEBUG ("Condition has been signalled");
   }
+  
+  gboolean is_canceled = downloader->priv->download_canceled;
+  
+  if (downloader->priv->download_canceled) {
+    downloader->priv->download_canceled = FALSE;
+  }
+  
   downloader->priv->fetching = FALSE;
+  
   GST_OBJECT_UNLOCK (downloader);
 
   // Now we disconnect everything from the data source
@@ -840,7 +851,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   }
 
   // Cancellation (this is when we have been intendendly cancelled)
-  if (fragment->cancelled) {
+  if (fragment->cancelled || is_canceled) {
     g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_CANCELLED;
   }
@@ -855,12 +866,12 @@ skippy_uri_downloader_complete (SkippyUriDownloader * downloader)
 {
   GST_OBJECT_LOCK (downloader);
   // We share this with the cond wait
-  if (!downloader->priv->fragment->completed) {
-    downloader->priv->fragment->completed = TRUE;
-    GST_DEBUG_OBJECT (downloader, "Signaling wait condition");
-    g_cond_signal (&downloader->priv->cond);
-  }
+  downloader->priv->fragment->completed = TRUE;
+  //downloader->priv->download_done = TRUE;
+  GST_DEBUG_OBJECT (downloader, "Signaling wait condition");
+  g_cond_signal (&downloader->priv->cond);
   GST_OBJECT_UNLOCK (downloader);
+
 }
 
 // Cancel function: will unblock fetch function as quick as possible and mark download as failure
@@ -869,13 +880,26 @@ skippy_uri_downloader_complete (SkippyUriDownloader * downloader)
 void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader)
 {
   GST_OBJECT_LOCK (downloader);
-  if (downloader->priv->fetching) {
-    GST_DEBUG ("Cancelling ongoing download");
+  GST_DEBUG ("Cancelling ongoing download");
+  //downloader->priv->download_canceled = TRUE;
+  if (downloader->priv->fragment) {
     downloader->priv->fragment->cancelled = TRUE;
-    g_cond_signal (&downloader->priv->cond);
-  } else {
-    GST_TRACE ("There is no ongoing download to cancel");
   }
+  GST_DEBUG_OBJECT (downloader, "Signaling wait condition.");
+  g_cond_signal (&downloader->priv->cond);
+  GST_OBJECT_UNLOCK (downloader);
+}
+
+void skippy_uri_downloader_interrupt (SkippyUriDownloader * downloader)
+{
+  GST_OBJECT_LOCK (downloader);
+  GST_DEBUG ("Cancelling ongoing download");
+  downloader->priv->download_canceled = TRUE;
+  if (downloader->priv->fragment) {
+    downloader->priv->fragment->cancelled = TRUE;
+  }
+  GST_DEBUG_OBJECT (downloader, "Signaling wait condition.");
+  g_cond_signal (&downloader->priv->cond);
   GST_OBJECT_UNLOCK (downloader);
 }
 

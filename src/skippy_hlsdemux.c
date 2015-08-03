@@ -301,8 +301,8 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   GST_OBJECT_UNLOCK (demux);
   GST_DEBUG ("Checking for ongoing downloads to cancel ...");
   // Now cancel all downloads to make the stream function exit quickly in case there are some
-  skippy_uri_downloader_cancel (demux->downloader);
-  skippy_uri_downloader_cancel (demux->playlist_downloader);
+  skippy_uri_downloader_interrupt (demux->downloader);
+  skippy_uri_downloader_interrupt (demux->playlist_downloader);
   // Block until we're done cancelling
   g_rec_mutex_lock (&demux->stream_lock);
   g_rec_mutex_unlock (&demux->stream_lock);
@@ -553,6 +553,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
     GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("Invalid M3U8 playlist (buffer=%p)", demux->playlist), (NULL));
     goto error;
   }
+  
   GST_OBJECT_UNLOCK (demux);
 
   // Sending stats message about first playlist fetch
@@ -568,7 +569,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
 
   skippy_hls_demux_link_pads (demux);
-
+  
   gst_task_start (demux->stream_task);
 
   GST_LOG ("Task started");
