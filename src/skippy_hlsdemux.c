@@ -439,7 +439,7 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
 
   // Post the message on the bus
   gst_element_post_message (GST_ELEMENT_CAST (demux),
-    gst_message_ref (gst_message_new_element (GST_OBJECT_CAST (demux), structure))
+    gst_message_new_element (GST_OBJECT_CAST (demux), structure)
   );
 }
 
