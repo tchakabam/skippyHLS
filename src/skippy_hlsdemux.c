@@ -199,6 +199,10 @@ skippy_hls_demux_dispose (GObject * obj)
   GST_DEBUG ("Disposing ...");
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (obj);
+  
+  skippy_hls_demux_reset (demux);
+  skippy_hls_demux_stop (demux);
+  
 
   G_OBJECT_CLASS (parent_class)->dispose (obj);
 
@@ -387,13 +391,14 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     // Interrupt streaming thread
     case GST_STATE_CHANGE_PAUSED_TO_READY:
+      skippy_hls_demux_pause (demux);
       // Can be called while streaming thread is running
       break;
     // Shut down
     case GST_STATE_CHANGE_READY_TO_NULL:
       // Will only be called after streaming thread was paused
-      skippy_hls_demux_pause (demux);
-      skippy_hls_demux_stop (demux);
+      // TODO: mipesic experimental uncomment if it goes wrong
+      //skippy_hls_demux_stop (demux);
       break;
     default:
       break;
@@ -663,7 +668,6 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_event (GstPad *pad, GstPadP
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (user_data);
   GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
   GstCaps *caps;
-
   if (event->type == GST_EVENT_CAPS) {
     gst_event_parse_caps (event, &caps);
     GST_OBJECT_LOCK (demux);
@@ -821,13 +825,6 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   GST_INFO ("Received GST_EVENT_SEEK");
 
-  // Not seeking on a live stream
-  if (skippy_m3u8_client_is_live (demux->client)) {
-    GST_WARNING_OBJECT (demux, "Received seek event for live stream");
-    gst_event_unref (event);
-    return FALSE;
-  }
-
   // Parse seek event
   gst_event_parse_seek (event, &rate, &format, &flags, &start_type, &start, &stop_type, &stop);
   if (format != GST_FORMAT_TIME) {
@@ -838,7 +835,11 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   GST_DEBUG_OBJECT (demux, "Seek event, rate: %f start: %" GST_TIME_FORMAT " stop: %" GST_TIME_FORMAT,
     rate, GST_TIME_ARGS (start), GST_TIME_ARGS (stop));
-
+  
+  if (flags & GST_SEEK_FLAG_FLUSH) {
+    GST_DEBUG_OBJECT (demux, "Sending flush start");
+    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
+  }
   // Pausing streaming task (blocking)
   skippy_hls_demux_pause (demux);
   // At this point we can be sure the stream loop is paused
@@ -851,10 +852,7 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   demux->need_segment = TRUE;
 
-  // Flush start
   if (flags & GST_SEEK_FLAG_FLUSH) {
-    GST_DEBUG_OBJECT (demux, "Sending flush start");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
     GST_DEBUG_OBJECT (demux, "Sending flush stop");
     gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
   }
