@@ -167,6 +167,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   // Member objects
   demux->client = skippy_m3u8_client_new ();
   demux->playlist = NULL; // Storage for initial playlist
+  demux->caps = NULL;
 
   // Internal elements
   demux->buffer_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-buffer-queue");
@@ -669,8 +670,11 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_event (GstPad *pad, GstPadP
   GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
   GstCaps *caps;
   if (event->type == GST_EVENT_CAPS) {
-    gst_event_parse_caps (event, &caps);
     GST_OBJECT_LOCK (demux);
+    if (demux->caps) {
+      gst_caps_unref (demux->caps);
+    }
+    gst_event_parse_caps (event, &caps);
     demux->caps = gst_caps_copy (caps);
     GST_OBJECT_UNLOCK (demux);
   }
