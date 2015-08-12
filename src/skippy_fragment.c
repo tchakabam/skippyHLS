@@ -89,13 +89,9 @@ skippy_fragment_dispose (GObject * object)
 {
   SkippyFragment *fragment = SKIPPY_FRAGMENT (object);
 
-  if (fragment->uri) {
-    g_free (fragment->uri);
-  }
-
-  if (fragment->key_uri) {
-    g_free (fragment->key_uri);
-  }
+  g_free (fragment->uri);
+  
+  g_free (fragment->key_uri);
 
   G_OBJECT_CLASS (skippy_fragment_parent_class)->dispose (object);
 
