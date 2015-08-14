@@ -79,6 +79,7 @@ struct _SkippyHLSDemux
 
   /* Internal state */
   GstClockTime position;
+  GstClockTime position_downloaded;
   gint download_failed_count;
   gboolean continuing;
 };

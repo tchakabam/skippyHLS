@@ -251,6 +251,7 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
   GST_OBJECT_LOCK (demux);
   // Reset all our state fields
   demux->position = 0;
+  demux->position_downloaded = 0;
   demux->download_failed_count = 0;
   demux->continuing = FALSE;
 
@@ -652,8 +653,8 @@ GstPadProbeReturn skippy_hls_demux_src_forward_probe_buffer (GstPad *pad, GstPad
 
   if (demux->need_segment) {
     GST_LOG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
-      GST_TIME_ARGS (demux->segment.position));
-    GST_BUFFER_PTS(buffer) = demux->segment.position;
+      GST_TIME_ARGS (demux->position));
+    GST_BUFFER_PTS(buffer) = demux->position;
     GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT );
   }
 
@@ -944,6 +945,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
   // Schedule task for pause
   GST_OBJECT_LOCK (demux);
   demux->position = 0;
+  demux->position_downloaded = 0;
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
   // Send EOS event
@@ -1126,15 +1128,15 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
   max_buffer_duration = skippy_hls_demux_get_max_buffer_duration (demux);
 
   GST_DEBUG ("Playback position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT ", Queued position is %" GST_TIME_FORMAT,
-    GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position));
+    GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position_downloaded));
 
   // Check for wether we should limit downloading
   if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE
-    && demux->position > pos + max_buffer_duration) {
+    && demux->position_downloaded > pos + max_buffer_duration) {
     // Diff' between current playhead and buffer-head in microseconds
-    max_wait = demux->position - pos - max_buffer_duration;
+    max_wait = demux->position_downloaded - pos - max_buffer_duration;
     GST_TRACE ("Waiting in task as we have preloaded enough (until %" GST_TIME_FORMAT " of media position)",
-      GST_TIME_ARGS (demux->position));
+      GST_TIME_ARGS (demux->position_downloaded));
     // Timed-cond wait here
     GST_OBJECT_LOCK (demux);
     skippy_hls_stream_loop_wait_locked (demux, max_wait);
@@ -1175,7 +1177,13 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   // Get next fragment from M3U8 list
   referrer_uri = skippy_m3u8_client_get_uri (demux->client);
   fragment = skippy_m3u8_client_get_current_fragment (demux->client);
+  
   if (fragment) {
+    
+    GST_OBJECT_LOCK (demux);
+    demux->position = fragment->start_time;
+    GST_OBJECT_UNLOCK (demux);
+    
     GST_INFO_OBJECT (demux, "Pushing data for next fragment: %s (Byte-Range=%" G_GINT64_FORMAT " - %" G_GINT64_FORMAT ")",
       fragment->uri, fragment->range_start, fragment->range_end);
     // Tell downloader to push data
@@ -1190,7 +1198,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   } else {
     GST_INFO_OBJECT (demux, "This playlist doesn't contain more fragments");
   }
-
+  
   GST_DEBUG ("Returning finished fragment");
 
   // Handle result from current attempt
@@ -1228,7 +1236,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       fragment->download_stop_time - fragment->download_start_time, fragment->size);
     // Reset failure counter, position and scheduling condition
     GST_OBJECT_LOCK (demux);
-    demux->segment.position = demux->position = fragment->stop_time;
+    demux->position_downloaded = fragment->stop_time;
     demux->download_failed_count = 0;
     demux->continuing = FALSE;
     GST_OBJECT_UNLOCK (demux);
