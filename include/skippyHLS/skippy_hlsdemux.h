@@ -62,6 +62,8 @@ struct _SkippyHLSDemux
   GstPad *sinkpad;
   GstPad *srcpad;
   GstPad *queue_sinkpad;
+  
+  GstPad * _sink_pad;
 
   /* Member objects */
   gboolean need_segment, need_stream_start;
