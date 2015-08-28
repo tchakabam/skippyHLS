@@ -69,7 +69,7 @@ struct _SkippyHLSDemux
   gboolean need_segment, need_stream_start;
   GstSegment segment;
   GstCaps *caps;
-  GstElement *download_queue, *buffer_queue;
+  GstElement *download_queue;
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;
   SkippyUriDownloader *playlist_downloader;

@@ -172,7 +172,6 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->caps = NULL;
 
   // Internal elements
-  demux->buffer_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-buffer-queue");
   demux->download_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-download-queue");
   demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
   demux->downloader = skippy_uri_downloader_new ();
@@ -185,7 +184,6 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   
 
   // Add bin elements
-  gst_bin_add (GST_BIN (demux), demux->buffer_queue);
   gst_bin_add (GST_BIN (demux), demux->download_queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
@@ -237,6 +235,11 @@ skippy_hls_demux_dispose (GObject * obj)
     gst_object_unref (demux->_sink_pad);
     demux->_sink_pad = NULL;
   }
+  
+  if (demux->caps) {
+    gst_caps_unref (demux->caps);
+    demux->caps = NULL;
+  }
 
   GST_DEBUG ("Done cleaning up.");
 }
@@ -285,19 +288,6 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     NULL);
     GST_OBJECT_LOCK (demux);
   }
-
-  if (demux->buffer_queue) {
-    GST_OBJECT_UNLOCK (demux);
-    // Download queue is unlimited
-    g_object_set (demux->buffer_queue,
-      "max-size-buffers", 0,
-      "max-size-bytes", 2*16*1024,
-      "max-size-time", 6*3600*GST_SECOND,
-      "use-buffering", FALSE,
-    NULL);
-    GST_OBJECT_LOCK (demux);
-  }
-
   GST_OBJECT_UNLOCK (demux);
 }
 
@@ -411,9 +401,6 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     // Shut down
     case GST_STATE_CHANGE_READY_TO_NULL:
-      // Will only be called after streaming thread was paused
-      // TODO: mipesic experimental uncomment if it goes wrong
-      //skippy_hls_demux_stop (demux);
       break;
     default:
       break;
@@ -977,7 +964,7 @@ skippy_hls_demux_sink_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buff
   skippy_hls_demux_update_downstream_events (demux, TRUE, TRUE);
   ret_value = gst_pad_chain (demux->queue_sinkpad, buffer);
   if (ret_value < GST_FLOW_OK) {
-    GST_WARNING ("Error while invoking downloader queue chain function. Data not pushed to the queue!");
+    GST_WARNING ("Warning: %s while invoking downloader queue chain function.", gst_flow_get_name (ret_value));
   }
   return ret_value;
 }
