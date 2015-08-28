@@ -62,12 +62,14 @@ struct _SkippyHLSDemux
   GstPad *sinkpad;
   GstPad *srcpad;
   GstPad *queue_sinkpad;
+  
+  GstPad * _sink_pad;
 
   /* Member objects */
   gboolean need_segment, need_stream_start;
   GstSegment segment;
   GstCaps *caps;
-  GstElement *download_queue, *buffer_queue;
+  GstElement *download_queue;
   GstBuffer* playlist;
   SkippyUriDownloader *downloader;
   SkippyUriDownloader *playlist_downloader;
@@ -79,6 +81,7 @@ struct _SkippyHLSDemux
 
   /* Internal state */
   GstClockTime position;
+  GstClockTime position_downloaded;
   gint download_failed_count;
   gboolean continuing;
 };

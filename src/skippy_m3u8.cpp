@@ -73,7 +73,6 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
   /* alloc size + 1 to end with a null character */
   playlist = (gchar*) g_malloc0 (info.size + 1);
   memcpy (playlist, info.data, info.size);
-
   gst_buffer_unmap (buf, &info);
   return playlist;
 }
@@ -82,21 +81,15 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
 gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer)
 {
   SkippyM3UParser p;
-  string loaded_playlist_uri = client->priv->playlist.uri;
-
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
   if (!playlist) {
     return FALSE;
   }
-
-  if (uri != NULL) {
-    loaded_playlist_uri = string(uri);
-  }
   {
     lock_guard<recursive_mutex> lock(client->priv->mutex);
-    client->priv->playlist = p.parse(loaded_playlist_uri, string(playlist));
+    string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
+    client->priv->playlist = p.parse(loaded_playlist_uri, playlist);
   }
-
   g_free (playlist);
   return TRUE;
 }
@@ -119,7 +112,7 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
   fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
   fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
-  return (SkippyFragment*) g_object_ref(fragment);
+  return fragment;
 }
 
 void skippy_m3u8_client_advance_to_next_fragment (SkippyM3U8Client * client)
