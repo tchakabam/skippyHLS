@@ -55,6 +55,7 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 
 GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 #define GST_CAT_DEFAULT skippy_hls_demux_debug
+#define SKIPPY_HLS_DOWNLOAD_AHEAD_MS "SKIPPY_DOWNLOAD_AHEAD_MS"
 
 typedef enum
 {
@@ -70,6 +71,8 @@ static void skippy_hls_demux_finalize (GObject * obj);
 /* GstElement */
 static GstStateChangeReturn
 skippy_hls_demux_change_state (GstElement * element, GstStateChange transition);
+static void
+skippy_hls_demux_set_context (GstElement *element, GstContext *context);
 
 /* SkippyHLSDemux */
 static GstFlowReturn skippy_hls_demux_sink_data (GstPad * pad, GstObject * parent, GstBuffer * buf);
@@ -133,6 +136,7 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
   gobject_class->finalize = skippy_hls_demux_finalize;
 
   element_class->change_state = GST_DEBUG_FUNCPTR (skippy_hls_demux_change_state);
+  element_class->set_context = skippy_hls_demux_set_context;
 
   gst_element_class_add_pad_template (element_class,
       gst_static_pad_template_get (&srctemplate));
@@ -191,6 +195,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->need_segment = TRUE;
   demux->need_stream_start = TRUE;
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
+  
+  demux->download_ahead = DEFAULT_BUFFER_DURATION;
 
   // Thread
   g_rec_mutex_init (&demux->stream_lock);
@@ -407,6 +413,21 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
   }
 
   return GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+}
+
+static void
+skippy_hls_demux_set_context (GstElement *element, GstContext *context)
+{
+  SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
+  
+  GstStructure* context_structure = gst_context_get_structure (context);
+  
+  guint64 buffer_ahead = 0;
+  if (gst_structure_get_uint64 (context_structure, SKIPPY_HLS_DOWNLOAD_AHEAD_MS, &buffer_ahead)) {
+    demux->download_ahead = buffer_ahead;
+  }
+  
+  GST_ELEMENT_CLASS (parent_class)->set_context (element, context);
 }
 
 // Posts HLS statistics messages on the element bus
@@ -924,30 +945,6 @@ skippy_hls_demux_is_caching_allowed (SkippyHLSDemux * demux)
   return ret;
 }
 
-// Checks in our parent object for properties to know what kind of max buffer size we
-// should apply
-//
-// MT-safe
-static GstClockTime
-skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux)
-{
-  // Find top-level object with buffer-duration property
-  GstObject *parent = find_first_parent_object_with_property (GST_OBJECT(demux), "buffer-duration", TRUE);
-  GstClockTime res = DEFAULT_BUFFER_DURATION;
-
-  if (parent) {
-    g_object_get (parent, "buffer-duration", &res, NULL);
-    gst_object_unref (parent);
-  }
-
-  if (res < MIN_BUFFER_DURATION) {
-    res = MIN_BUFFER_DURATION;
-  }
-
-  return res;
-}
-
-
 static GstFlowReturn
 skippy_hls_demux_sink_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer)
 {
@@ -1129,7 +1126,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
   // Check upfront position relative to stream position
   // If we branch here this means we might want to wait
   pos = skippy_hls_demux_query_position (demux);
-  max_buffer_duration = skippy_hls_demux_get_max_buffer_duration (demux);
+  max_buffer_duration = demux->download_ahead;
 
   GST_DEBUG ("Playback position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT ", Queued position is %" GST_TIME_FORMAT,
     GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position_downloaded));
