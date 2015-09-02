@@ -55,7 +55,7 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 
 GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 #define GST_CAT_DEFAULT skippy_hls_demux_debug
-#define SKIPPY_HLS_DOWNLOAD_AHEAD_MS "SKIPPY_DOWNLOAD_AHEAD_MS"
+#define SKIPPY_HLS_DOWNLOAD_AHEAD "skippy-download-ahead-ms"
 
 typedef enum
 {
@@ -395,8 +395,8 @@ skippy_hls_demux_set_context (GstElement *element, GstContext *context)
   
   GstStructure* context_structure = gst_context_get_structure (context);
   
-  guint64 buffer_ahead = 0;
-  if (gst_structure_get_uint64 (context_structure, SKIPPY_HLS_DOWNLOAD_AHEAD_MS, &buffer_ahead)) {
+  GstClockTime buffer_ahead = 0;
+  if (gst_structure_get_uint64 (context_structure, SKIPPY_HLS_DOWNLOAD_AHEAD, &buffer_ahead)) {
     demux->download_ahead = buffer_ahead;
   }
   
