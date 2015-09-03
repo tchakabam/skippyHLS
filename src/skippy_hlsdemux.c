@@ -55,7 +55,7 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 
 GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 #define GST_CAT_DEFAULT skippy_hls_demux_debug
-#define SKIPPY_HLS_DOWNLOAD_AHEAD "skippy-download-ahead-ms"
+#define SKIPPY_HLS_DOWNLOAD_AHEAD "skippy-download-ahead"
 
 typedef enum
 {
