@@ -91,6 +91,33 @@ static GstClockTime skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * d
 static GstFlowReturn skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer);
 static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event);
 
+static GstObject* find_first_parent_object_with_property (GstObject* self, const gchar* prop, gboolean toplevel)
+{
+  GObjectClass *klass;
+  GstObject *parent_swap = NULL;
+  GstObject *parent = gst_element_get_parent(self);
+  GstObject *tl_parent = NULL;
+
+  while (parent) {
+    klass = G_OBJECT_GET_CLASS(G_OBJECT(parent));
+    // Check for conventional UriDecodeBin or DecodeBin properties in our parent object
+    if (g_object_class_find_property (klass, prop)) {
+      // If we are looking for the toplevel parent with this property then simply store the
+      // pointer and iterate through
+      if (toplevel) {
+        tl_parent = gst_object_ref(parent);
+      } else {
+        // Otherwise we can just return
+        return parent;
+      }
+    }
+    parent_swap = parent;
+    parent = gst_element_get_parent (parent_swap);
+    gst_object_unref (parent_swap);
+  }
+  return tl_parent;
+}
+
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 
@@ -168,7 +195,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->need_stream_start = TRUE;
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
 
-  demux->download_ahead = DEFAULT_BUFFER_DURATION;
+  demux->download_ahead = GST_CLOCK_TIME_NONE;
 
   // Thread
   g_cond_init (&demux->wait_cond);
@@ -510,6 +537,33 @@ skippy_hls_demux_query_position (SkippyHLSDemux * demux)
   }
   GST_TRACE ("Position query result: %" GST_TIME_FORMAT, GST_TIME_ARGS ((GstClockTime) pos));
   return pos;
+}
+
+// Checks in our parent object for properties to know what kind of max buffer size we
+// should apply
+//
+// MTsafe
+static GstClockTime
+skippy_hls_demux_get_download_ahead_duration (SkippyHLSDemux * demux)
+{
+  // Find toplevel object with bufferduration property
+  GstObject *parent = find_first_parent_object_with_property (GST_OBJECT(demux), "buffer-duration", TRUE);
+  GstClockTime res = DEFAULT_BUFFER_DURATION;
+
+  if (parent) {
+    g_object_get (parent, "buffer-duration", &res, NULL);
+    gst_object_unref (parent);
+  }
+
+  if (demux->download_ahead != GST_CLOCK_TIME_NONE) {
+    res = demux->download_ahead;
+  }
+
+  if (res < MIN_BUFFER_DURATION) {
+    res = MIN_BUFFER_DURATION;
+  }
+
+  return res;
 }
 
 // Sets the duration field of our object according to the M3U8 parser output
@@ -1063,7 +1117,6 @@ skippy_hls_stream_loop_wait_locked (SkippyHLSDemux * demux, GstClockTime max_wai
   GST_TRACE ("Continuing stream task now");
 }
 
-
 // Checks wether we should download another segment with respect to buffer size.
 // Only runs in the streaming thread.
 //
@@ -1095,7 +1148,7 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
   // Check upfront position relative to stream position
   // If we branch here this means we might want to wait
   pos = skippy_hls_demux_query_position (demux);
-  max_buffer_duration = demux->download_ahead;
+  max_buffer_duration = skippy_hls_demux_get_download_ahead_duration (demux);
 
   GST_DEBUG ("Playback position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT ", Queued position is %" GST_TIME_FORMAT,
     GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position_downloaded));
