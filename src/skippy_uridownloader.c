@@ -552,10 +552,13 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
     break;
   case GST_EVENT_EOS:
     skippy_uri_downloader_handle_eos (downloader);
+    GST_WARNING ("EOS");
     break;
   case GST_EVENT_FLUSH_START:
+    GST_WARNING ("FLUSH START EVENT FROM DOWNLOADER");
     break;
   case GST_EVENT_FLUSH_STOP:
+    GST_WARNING ("FLUSH STOP EVENT FROM DOWNLOADER");
     break;
   default:
     break;

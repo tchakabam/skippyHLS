@@ -946,6 +946,18 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
     GST_OBJECT_UNLOCK (demux);
   }
 
+  switch (event->type) {
+  case GST_EVENT_FLUSH_START:
+    GST_WARNING ("FLUSH START");
+    break;
+  case GST_EVENT_FLUSH_STOP:
+    GST_WARNING ("FLUSH STOP");
+    break;
+  case GST_EVENT_EOS:
+    GST_WARNING ("EOS");
+    break;
+  }
+
   gst_event_unref (event);
   return TRUE;
 }
