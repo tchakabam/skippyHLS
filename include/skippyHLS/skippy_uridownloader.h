@@ -75,8 +75,8 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
 	const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
 GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader);
 
-void skippy_uri_downloader_interrupt (SkippyUriDownloader * downloader);
+void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader);
 
-void skippy_uri_downloader_continue (SkippyUriDownloader * downloader);
+void skippy_uri_downloader_interrupt (SkippyUriDownloader * downloader);
 
 G_END_DECLS

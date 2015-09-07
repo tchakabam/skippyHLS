@@ -59,12 +59,11 @@ struct _SkippyHLSDemux
   GstBin parent;
 
   /* Pads */
-  // External
   GstPad *sinkpad;
   GstPad *srcpad;
-  // Internal
   GstPad *queue_sinkpad;
-  GstPad * queue_proxy_pad;
+  
+  GstPad * _sink_pad;
 
   /* Member objects */
   gboolean need_segment, need_stream_start;
