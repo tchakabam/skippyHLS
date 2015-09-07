@@ -79,6 +79,7 @@ struct _SkippyHLSDemux
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
+  GCond wait_cond;
 
   /* Internal state */
   GstClockTime position;
@@ -86,6 +87,7 @@ struct _SkippyHLSDemux
   GstClockTime download_ahead;
   gint download_failed_count;
   gboolean continuing;
+  gboolean disposing;
 };
 
 struct _SkippyHLSDemuxClass
