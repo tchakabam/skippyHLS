@@ -43,6 +43,7 @@ G_DEFINE_TYPE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_BIN);
    (G_TYPE_INSTANCE_GET_PRIVATE ((obj), \
     TYPE_SKIPPY_URI_DOWNLOADER, SkippyUriDownloaderPrivate))
 
+#define DOWNLOAD_RESUMING_ENABLED TRUE
 
 struct _SkippyUriDownloaderPrivate
 {
@@ -199,7 +200,8 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   // Is this a retrial from an unfinished download?
   // We can check that its the same by comparing the URIs and the loaded bytes count
   // NOTE: we do the string comparison only after the bytes count is off as its more expensive
-  // If we are seeking in some way (i.e will issue a segment event to the stream) then wont consider resuming at all.
+  // If we are seeking in some way then we wont consider resuming at all.
+#if DOWNLOAD_RESUMING_ENABLED
   if (G_UNLIKELY(
     // Did we not complete the previous download?
      downloader->priv->bytes_loaded != downloader->priv->bytes_total
@@ -212,7 +214,9 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
     // the missing stuff.
     GST_DEBUG ("Previous download interruption detected");
     downloader->priv->previous_was_interrupted = TRUE;
-  } else {
+  } else
+#endif
+  {
     // If above condition does not hold: Fresh new download state
     downloader->priv->bytes_loaded = 0;
     downloader->priv->bytes_total = 0;
@@ -553,10 +557,6 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
   case GST_EVENT_EOS:
     skippy_uri_downloader_handle_eos (downloader);
     break;
-  case GST_EVENT_FLUSH_START:
-    break;
-  case GST_EVENT_FLUSH_STOP:
-    break;
   default:
     break;
   }
@@ -713,18 +713,11 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
 
     // Flush only if download got cancelled
-    if (TRUE || downloader->priv->fragment->cancelled && !downloader->priv->err) {
+    if (downloader->priv->fragment->cancelled && !downloader->priv->err) {
       GST_DEBUG_OBJECT (downloader, "Sending flush start");
-
-      //GstSegment segment;
-      //gst_segment_init (&segment, GST_FORMAT_BYTES);
-      //gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_segment (&segment));
 
       downloader->priv->flushing = TRUE;
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
-
-      //GST_DEBUG ("Setting source element to PAUSED state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
-      //gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
 
       GST_DEBUG_OBJECT (downloader, "Sending flush stop");
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_stop (TRUE));
@@ -888,7 +881,7 @@ skippy_uri_downloader_complete (SkippyUriDownloader * downloader)
 static void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader, gboolean interrupt)
 {
   GST_OBJECT_LOCK (downloader);
-  GST_DEBUG ("Cancelling ongoing download");
+  GST_DEBUG ("Eventually cancel ongoing download");
   if (interrupt) {
     downloader->priv->download_canceled = TRUE;
   }
@@ -902,12 +895,16 @@ static void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader, gboo
 
 void skippy_uri_downloader_interrupt (SkippyUriDownloader * downloader)
 {
+  GST_DEBUG ("Interrupt");
   skippy_uri_downloader_cancel (downloader, TRUE);
 }
 
 void skippy_uri_downloader_continue (SkippyUriDownloader * downloader)
 {
+  GST_DEBUG ("Continue");
   GST_OBJECT_LOCK (downloader);
-  downloader->priv->download_canceled = TRUE;
+  downloader->priv->bytes_loaded = 0;
+  downloader->priv->bytes_total = 0;
+  downloader->priv->download_canceled = FALSE;
   GST_OBJECT_UNLOCK (downloader);
 }

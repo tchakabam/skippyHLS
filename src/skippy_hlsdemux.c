@@ -633,9 +633,9 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
 
   // Link downloader -> floating sink pad
   downloader_srcpad = gst_element_get_static_pad (GST_ELEMENT(demux->downloader), "src");
-  GstPadLinkReturn ret = gst_pad_link (downloader_srcpad, demux->queue_proxy_pad);
-  if (ret < GST_FLOW_OK) {
-    GST_ERROR ("Error while linking downloader src pad to floating sink pad: %s", gst_flow_get_name(ret));
+  if (gst_pad_link (downloader_srcpad, demux->queue_proxy_pad) != GST_PAD_LINK_OK) {
+    // In case this ever happens: This will abort the process in test conditions
+    g_critical ("Error while linking downloader src pad to floating sink pad");
   }
   gst_object_unref (downloader_srcpad);
 
@@ -776,10 +776,6 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   GST_DEBUG_OBJECT (demux, "Seek event, rate: %f start: %" GST_TIME_FORMAT " stop: %" GST_TIME_FORMAT,
     rate, GST_TIME_ARGS (start), GST_TIME_ARGS (stop));
 
-  if (flags & GST_SEEK_FLAG_FLUSH) {
-    GST_DEBUG_OBJECT (demux, "Sending flush start");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
-  }
   // Pausing streaming task (blocking)
   skippy_hls_demux_pause (demux);
   // At this point we can be sure the stream loop is paused
@@ -790,12 +786,19 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   // Update downloader segment after seek
   gst_segment_do_seek (&demux->segment, rate, format, flags, start_type, start, stop_type, stop, NULL);
 
-  demux->need_segment = TRUE;
+  GST_DEBUG_OBJECT (demux, "Sending flush start");
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
+  GST_DEBUG_OBJECT (demux, "Sending flush stop");
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
 
-  if (flags & GST_SEEK_FLAG_FLUSH) {
-    GST_DEBUG_OBJECT (demux, "Sending flush stop");
-    gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
-  }
+  /*
+  GstElement *queue = gst_pad_get_parent(demux->queue_sinkpad);
+  gst_element_send_event (queue, gst_event_new_flush_start ());
+  gst_element_send_event (queue, gst_event_new_flush_stop (TRUE));
+  gst_object_unref (queue);
+  */
+
+  demux->need_segment = TRUE;
 
   // Make sure these will handle the next download requested
   skippy_uri_downloader_continue (demux->downloader);
@@ -908,23 +911,25 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
 
   GST_TRACE ("Got %" GST_PTR_FORMAT, buffer);
 
-  GstFlowReturn ret_value = GST_FLOW_OK;
+  GstFlowReturn ret_value;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
+
   GST_OBJECT_LOCK (demux);
   if (demux->need_segment) {
     GST_LOG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
              GST_TIME_ARGS (demux->position));
     GST_BUFFER_PTS(buffer) = demux->position;
     GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);
-  }
-  else {
+  } else {
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
   }
   GST_OBJECT_UNLOCK (demux);
+
   skippy_hls_demux_update_downstream_events (demux, TRUE, TRUE);
+
   ret_value = gst_pad_chain (demux->queue_sinkpad, buffer);
   if (ret_value < GST_FLOW_OK) {
-    GST_WARNING ("Warning: %s while invoking downloader queue chain function.", gst_flow_get_name (ret_value));
+    GST_LOG ("Proxy pad was %s while invoking queue chain function", gst_flow_get_name (ret_value));
   }
   return ret_value;
 }
@@ -936,7 +941,8 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
   GstCaps *caps;
-  if (event->type == GST_EVENT_CAPS) {
+  switch (event->type) {
+  case GST_EVENT_CAPS:
     GST_OBJECT_LOCK (demux);
     if (demux->caps) {
       gst_caps_unref (demux->caps);
@@ -944,6 +950,7 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
     gst_event_parse_caps (event, &caps);
     demux->caps = gst_caps_copy (caps);
     GST_OBJECT_UNLOCK (demux);
+    break;
   }
 
   gst_event_unref (event);
