@@ -82,12 +82,12 @@ struct _SkippyHLSDemux
   GCond wait_cond;
 
   /* Internal state */
+  GstClockTime download_ahead;
   GstClockTime position;
   GstClockTime position_downloaded;
-  GstClockTime download_ahead;
   gint download_failed_count;
   gboolean continuing;
-  gboolean disposing;
+  gboolean end_of_playlist_reached;
 };
 
 struct _SkippyHLSDemuxClass

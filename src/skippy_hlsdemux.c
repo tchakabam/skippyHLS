@@ -285,8 +285,10 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   // Signal the thread in case it's waiting
   GST_OBJECT_LOCK (demux);
   demux->continuing = TRUE;
-  // also reset the failed count so we start off with not backoff timing
+  // reset the failed count so we start off with not backoff timing
+  // and set end-of-playlist flag to false in order to restart fresh later
   demux->download_failed_count = 0;
+  demux->end_of_playlist_reached = FALSE;
   g_cond_signal (&demux->wait_cond);
   GST_OBJECT_UNLOCK (demux);
   GST_DEBUG ("Checking for ongoing downloads to cancel ...");
@@ -365,7 +367,8 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       GST_OBJECT_LOCK (demux);
-      if (demux->download_failed_count >= RETRY_THRESHOLD) {
+      if (demux->download_failed_count >= RETRY_THRESHOLD || demux->end_of_playlist_reached) {
+        // the above vars are reset in the pause function as we also need to do that when seeking
         GST_OBJECT_UNLOCK (demux);
         GST_LOG ("Interrupting retrial phase");
         // we want to force the restart as the task could be paused
@@ -885,8 +888,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
   gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
   // Schedule task for pause
   GST_OBJECT_LOCK (demux);
-  demux->position = 0;
-  demux->position_downloaded = 0;
+  demux->end_of_playlist_reached = TRUE;
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
 }
