@@ -296,31 +296,24 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   // Block until we're done cancelling
   g_rec_mutex_lock (&demux->stream_lock);
   g_rec_mutex_unlock (&demux->stream_lock);
+  // Make sure these will handle the next download requested
+  skippy_uri_downloader_continue (demux->downloader);
+  skippy_uri_downloader_continue (demux->playlist_downloader);
   GST_DEBUG ("Paused streaming task");
 }
 
+// MT-safe
 static void
-skippy_hls_demux_restart (SkippyHLSDemux * demux)
+skippy_hls_demux_restart (SkippyHLSDemux * demux, gboolean force)
 {
-  // If we are already paused, this is just about restarting
-  if (gst_task_get_state (demux->stream_task) == GST_TASK_PAUSED) {
-    gst_task_start (demux->stream_task);
+  if (!force && gst_task_get_state (demux->stream_task) == GST_TASK_PAUSED) {
+    GST_LOG ("Not restarting task, we are already forced and don't want to force a wake up");
     return;
   }
-
-  // Other case is if we want to interrupt a currently ongoing waiting for retrial
-  // in which case we are running but want to interrupt waiting, resetting the count and
-  // restart immediatly
-  GST_OBJECT_LOCK (demux);
-  if (demux->download_failed_count >= RETRY_THRESHOLD) {
-    GST_OBJECT_UNLOCK (demux);
-    skippy_hls_demux_pause (demux);
-    // At this point the stream loop is paused
-    gst_task_start (demux->stream_task);
-    return;
-  }
-  GST_OBJECT_UNLOCK (demux);
-
+  GST_LOG ("Restarting task");
+  skippy_hls_demux_pause (demux);
+  // At this point the stream loop is paused
+  gst_task_start (demux->stream_task);
 }
 
 // Called for state change from READY -> NULL
@@ -371,7 +364,16 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       gst_task_start (demux->stream_task);
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
-      skippy_hls_demux_restart (demux);
+      GST_OBJECT_LOCK (demux);
+      if (demux->download_failed_count >= RETRY_THRESHOLD) {
+        GST_OBJECT_UNLOCK (demux);
+        GST_LOG ("Interrupting retrial phase");
+        // we want to force the restart as the task could be paused
+        // after reaching the end of the playlist
+        skippy_hls_demux_restart (demux, TRUE);
+        break;
+      }
+      GST_OBJECT_UNLOCK (demux);
       break;
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
@@ -573,6 +575,10 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
   skippy_hls_demux_link_pads (demux);
 
+  // we will only restart if we the task is not in paused yet
+  // (we might handle the playlist as the demux has already been shutdown again and task has been paused)
+  skippy_hls_demux_restart (demux, FALSE);
+
 error:
   g_free (uri);
   return;
@@ -661,8 +667,6 @@ skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
   // Only set this once the pad is fully set up
   GST_OBJECT_LOCK (demux);
   demux->srcpad = srcpad;
-  demux->continuing = TRUE;
-  g_cond_signal (&demux->wait_cond);
   GST_OBJECT_UNLOCK (demux);
 
   GST_DEBUG ("Added src pad");
@@ -797,10 +801,6 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   demux->need_segment = TRUE;
 
-  // Make sure these will handle the next download requested
-  skippy_uri_downloader_continue (demux->downloader);
-  skippy_uri_downloader_continue (demux->playlist_downloader);
-
   // Restart the streaming task
   GST_DEBUG ("Restarting streaming task");
   gst_task_start (demux->stream_task);
@@ -881,14 +881,14 @@ static void
 skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
 {
   GST_DEBUG_OBJECT (demux, "Reached end of playlist, sending EOS");
+  // Send EOS event
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
   // Schedule task for pause
   GST_OBJECT_LOCK (demux);
   demux->position = 0;
   demux->position_downloaded = 0;
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
-  // Send EOS event
-  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
 }
 
 // Simply wraps caching allowed flag of M3U8 manifest to eventually add custom policy
