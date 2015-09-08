@@ -81,8 +81,11 @@ struct _SkippyHLSDemux
   GRecMutex stream_lock;
   GCond wait_cond;
 
-  /* Internal state */
+  // Params
   GstClockTime download_ahead;
+  gchar* temp_location;
+
+  /* Internal state */
   GstClockTime position;
   GstClockTime position_downloaded;
   gint download_failed_count;

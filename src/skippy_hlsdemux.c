@@ -87,7 +87,7 @@ static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demu
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux);
 static void skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
-static GstClockTime skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux);
+static gchar* skippy_hls_demux_configure_temp_location (SkippyHLSDemux * demux);
 static GstFlowReturn skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer);
 static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event);
 
@@ -95,7 +95,7 @@ static GstObject* find_first_parent_object_with_property (GstObject* self, const
 {
   GObjectClass *klass;
   GstObject *parent_swap = NULL;
-  GstObject *parent = gst_element_get_parent(self);
+  GstObject *parent = gst_element_get_parent (self);
   GstObject *tl_parent = NULL;
 
   while (parent) {
@@ -214,7 +214,6 @@ skippy_hls_demux_dispose (GObject * obj)
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (obj);
 
   skippy_hls_demux_reset (demux);
-  skippy_hls_demux_stop (demux);
 
   G_OBJECT_CLASS (parent_class)->dispose (obj);
 
@@ -375,6 +374,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
 {
   GstStateChangeReturn ret;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
+  gchar* temp_location;
 
   GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
@@ -388,6 +388,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     // Start streaming thread
     case GST_STATE_CHANGE_READY_TO_PAUSED:
+      skippy_hls_demux_configure_temp_location (demux);
       // This is initially starting the task
       GST_LOG ("Task starting");
       gst_task_start (demux->stream_task);
@@ -414,6 +415,11 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     // Shut down
     case GST_STATE_CHANGE_READY_TO_NULL:
+      // If we fail to go to PAUSED we go back from READY and thus the task is not being paused
+      // Calling this twice has no effect if its already paused but makes sure that its paused
+      // event after a failed transition to our PAUSED state.
+      skippy_hls_demux_pause (demux);
+      skippy_hls_demux_stop (demux);
       break;
     default:
       break;
@@ -564,6 +570,21 @@ skippy_hls_demux_get_download_ahead_duration (SkippyHLSDemux * demux)
   }
 
   return res;
+}
+
+static gchar*
+skippy_hls_demux_configure_temp_location (SkippyHLSDemux* demux)
+{
+  GstObject *parent = find_first_parent_object_with_property (GST_OBJECT(demux), "buffer-temp-location", TRUE);
+  gchar* str = NULL;
+  if (parent) {
+    g_object_get (parent, "buffer-temp-location", &str, NULL);
+    gst_object_unref (parent);
+  }
+  GST_LOG ("Temp location: %s", str);
+  g_object_set (demux->download_queue, "temp-template", str, NULL);
+  g_free (str);
+  return str;
 }
 
 // Sets the duration field of our object according to the M3U8 parser output
