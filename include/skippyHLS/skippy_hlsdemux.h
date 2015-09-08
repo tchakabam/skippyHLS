@@ -86,6 +86,7 @@ struct _SkippyHLSDemux
   GstClockTime position;
   GstClockTime position_downloaded;
   gint download_failed_count;
+  gint download_forbidden_count;
   gboolean continuing;
   gboolean end_of_playlist_reached;
 };

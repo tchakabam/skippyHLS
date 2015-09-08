@@ -1245,10 +1245,26 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     GST_OBJECT_UNLOCK (demux);
     // We only want to refetch the playlist if we get a 403 or a 404
     if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
-      GST_DEBUG_OBJECT (demux, "Updating the playlist because of 403 or 404");
-      //TODO: mipesic - what if refresh playlist operation fails - in current implementation we will
-      //continue with fetching expired segment over and over again. We can do something with return code
-      //of refresh playlist operation to prevent that.
+      GST_OBJECT_LOCK (demux);
+      demux->download_forbidden_count++;
+      GST_OBJECT_UNLOCK (demux);
+      GST_DEBUG_OBJECT (demux,
+        "Updating the playlist because of 403 or 404 (happened %d times in a row)",
+        (int) demux->download_forbidden_count);
+
+      // This should only happen once in a row - if we detect a broken M3U8, notify the application
+      if (demux->download_forbidden_count > 1) {
+        GST_ELEMENT_ERROR(demux, STREAM, DEMUX,
+          ("M3U8 data seems to be corrupt as it results in permanent 403s"),
+          ("Broken URL: %s, Failure count: %d, Error: %s", fragment->uri, (int) demux->download_forbidden_count, err->message));
+        gst_task_pause (demux->stream_task); // avoid retrying immediatly
+      }
+
+      // mipesic - what if refresh playlist operation fails - in current implementation we will
+      // continue with fetching expired segment over and over again. We can do something with return code
+      // of refresh playlist operation to prevent that.
+      // SH: Prevent what? In that case we will also retry fetching the playlist - we just provide the best effort. But
+      // for any kind of failure exponential backoff is applied.
       skippy_hls_demux_refresh_playlist (demux);
       playlist_refresh = TRUE;
     }
@@ -1262,6 +1278,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     GST_OBJECT_LOCK (demux);
     demux->position_downloaded = fragment->stop_time;
     demux->download_failed_count = 0;
+    demux->download_forbidden_count = 0;
     demux->continuing = FALSE;
     GST_OBJECT_UNLOCK (demux);
     // Go to next fragment
