@@ -80,6 +80,8 @@ SkippyM3UPlaylist SkippyM3UParser::parse(string uri, const string& playlist)
   // Output playlist
   SkippyM3UPlaylist outputPlaylist(uri);
 
+  g_message ("Dumping whole M3U8:\n\n\n%s\n\n\n", playlist.c_str());
+
   while ( getline(in, line) ){
     // evaluate main state of parser
     evalState();
