@@ -427,7 +427,7 @@ skippy_hls_demux_set_context (GstElement *element, GstContext *context)
 {
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
 
-  GstStructure* context_structure = gst_context_get_structure (context);
+  const GstStructure* context_structure = gst_context_get_structure (context);
 
   GstClockTime buffer_ahead = 0;
   if (gst_structure_get_uint64 (context_structure, SKIPPY_HLS_DOWNLOAD_AHEAD, &buffer_ahead)) {
@@ -1003,6 +1003,7 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
     gst_event_parse_caps (event, &caps);
     demux->caps = gst_caps_copy (caps);
     GST_OBJECT_UNLOCK (demux);
+  default:
     break;
   }
 
