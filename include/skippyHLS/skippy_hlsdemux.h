@@ -59,11 +59,12 @@ struct _SkippyHLSDemux
   GstBin parent;
 
   /* Pads */
+  // External
   GstPad *sinkpad;
   GstPad *srcpad;
+  // Internal
   GstPad *queue_sinkpad;
-  
-  GstPad * _sink_pad;
+  GstPad * queue_proxy_pad;
 
   /* Member objects */
   gboolean need_segment, need_stream_start;
@@ -78,13 +79,15 @@ struct _SkippyHLSDemux
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
+  GCond wait_cond;
 
   /* Internal state */
+  GstClockTime download_ahead;
   GstClockTime position;
   GstClockTime position_downloaded;
-  GstClockTime download_ahead;
   gint download_failed_count;
   gboolean continuing;
+  gboolean end_of_playlist_reached;
 };
 
 struct _SkippyHLSDemuxClass
