@@ -834,6 +834,8 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   GST_INFO ("Handling seek event to: %" GST_TIME_FORMAT, GST_TIME_ARGS(start));
 
+  // NOTE: The order of sending flush start/stop and pausing the task in between in MANDATORY !!
+
   GST_DEBUG_OBJECT (demux, "Sending flush start");
   gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
 
