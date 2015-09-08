@@ -834,20 +834,23 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
 
   GST_INFO ("Handling seek event to: %" GST_TIME_FORMAT, GST_TIME_ARGS(start));
 
+  // NOTE: The order of sending flush start/stop and pausing the task in between in MANDATORY !!
+
+  GST_DEBUG_OBJECT (demux, "Sending flush start");
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
+
   // Pausing streaming task (blocking)
   skippy_hls_demux_pause (demux);
   // At this point we can be sure the stream loop is paused
+
+  GST_DEBUG_OBJECT (demux, "Sending flush stop");
+  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
 
   // Seek on M3U8 data model
   skippy_m3u8_client_seek_to (demux->client, (GstClockTime) start);
 
   // Update downloader segment after seek
   gst_segment_do_seek (&demux->segment, rate, format, flags, start_type, start, stop_type, stop, NULL);
-
-  GST_DEBUG_OBJECT (demux, "Sending flush start");
-  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_start ());
-  GST_DEBUG_OBJECT (demux, "Sending flush stop");
-  gst_pad_send_event (demux->queue_sinkpad, gst_event_new_flush_stop (TRUE));
 
   /*
   GstElement *queue = gst_pad_get_parent(demux->queue_sinkpad);
