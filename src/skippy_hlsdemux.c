@@ -374,7 +374,6 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
 {
   GstStateChangeReturn ret;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
-  gchar* temp_location;
 
   GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
