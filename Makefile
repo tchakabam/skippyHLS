@@ -4,8 +4,8 @@ INCLUDE_DIR = include
 SRC_DIR = src
 TESTS_DIR = tests
 
-CXX_FLAGS	  = -std=c++11
-GCC_FLAGS         =
+CXX_FLAGS	  = -std=c++11 -Wall
+GCC_FLAGS         = -Wall
 GCC_INCLUDE_FLAGS = -I$(INCLUDE_DIR)
 GCC_LIBRARY_FLAGS = -lglib-2.0 -lgio-2.0 -lgobject-2.0 -lgnutls -lcurl -lgstreamer-1.0
 
@@ -39,7 +39,7 @@ objects: $(C_FILES) $(H_FILES)
 	gcc $(GCC_FLAGS) $(GCC_INCLUDE_FLAGS) -o build/skippy_hlsdemux.o -c src/skippy_hlsdemux.c
 	gcc $(GCC_FLAGS) $(GCC_INCLUDE_FLAGS) -o build/skippy_uridownloader.o -c src/skippy_uridownloader.c
 	g++ $(CXX_FLAGS) $(GCC_INCLUDE_FLAGS) -o build/skippy_m3u8.o -c src/skippy_m3u8.cpp
-	g++ $(CXX_FLAGS) $(GCC_INCLUDE_FLAGS) -o build/SkippyM3UParser.o -c src/SkippyM3UParser.cpp
+	g++ $(CXX_FLAGS) $(GCC_INCLUDE_FLAGS) -o build/SkippyM3UParser.o -c src/skippy_m3u8_parser.cpp
 
 tests: $(C_FILES_TESTS) lib
 	mkdir -p build
