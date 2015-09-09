@@ -65,14 +65,21 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
     return NULL;
   }
 
-  if (!g_utf8_validate ((gchar *) info.data, info.size, NULL)) {
-    gst_buffer_unmap (buf, &info);
-    return NULL;
-  }
-
+  // We make the copy before the validation to exclude any
+  // possibility of the validator mutating the data in some way
   /* alloc size + 1 to end with a null character */
   playlist = (gchar*) g_malloc0 (info.size + 1);
   memcpy (playlist, info.data, info.size);
+
+  GST_DEBUG ("\n\n\nM3U8 data dump:\n\n%s\n\n", playlist);
+
+  if (!g_utf8_validate ((const gchar *) info.data, info.size, NULL)) {
+    GST_ERROR ("M3U8 was not valid UTF-8 data");
+    gst_buffer_unmap (buf, &info);
+    g_free (playlist);
+    return NULL;
+  }
+
   gst_buffer_unmap (buf, &info);
   return playlist;
 }
