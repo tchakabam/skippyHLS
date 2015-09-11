@@ -19,15 +19,17 @@ struct SkippyM3U8ClientPrivate
   SkippyM3U8ClientPrivate ()
   :current_index(0)
   ,playlist("")
+  ,playlist_raw(NULL)
   {
 
   }
 
   ~SkippyM3U8ClientPrivate ()
   {
-
+    g_free (playlist_raw);
   }
 
+  gchar* playlist_raw;
   int current_index;
   SkippyM3UPlaylist playlist;
   recursive_mutex mutex;
@@ -65,14 +67,21 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
     return NULL;
   }
 
-  if (!g_utf8_validate ((gchar *) info.data, info.size, NULL)) {
-    gst_buffer_unmap (buf, &info);
-    return NULL;
-  }
-
+  // We make the copy before the validation to exclude any
+  // possibility of the validator mutating the data in some way
   /* alloc size + 1 to end with a null character */
   playlist = (gchar*) g_malloc0 (info.size + 1);
   memcpy (playlist, info.data, info.size);
+
+  GST_DEBUG ("\n\n\nM3U8 data dump:\n\n%s\n\n", playlist);
+
+  if (!g_utf8_validate ((const gchar *) info.data, info.size, NULL)) {
+    GST_ERROR ("M3U8 was not valid UTF-8 data");
+    gst_buffer_unmap (buf, &info);
+    g_free (playlist);
+    return NULL;
+  }
+
   gst_buffer_unmap (buf, &info);
   return playlist;
 }
@@ -89,9 +98,16 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
     lock_guard<recursive_mutex> lock(client->priv->mutex);
     string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
     client->priv->playlist = p.parse(loaded_playlist_uri, playlist);
+    // Free the old raw data and replace by new one
+    g_free (client->priv->playlist_raw); // This can be called safely with NULL
+    client->priv->playlist_raw = playlist;
   }
-  g_free (playlist);
   return TRUE;
+}
+
+gchar* skippy_m3u8_client_get_current_raw_data (SkippyM3U8Client * client) {
+  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  return client->priv->playlist_raw;
 }
 
 // Called to get the next fragment
