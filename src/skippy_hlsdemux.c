@@ -1058,7 +1058,6 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
       ret = FALSE;
       break;
     }
-    demux->need_segment = TRUE;
     ret = TRUE;
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
@@ -1260,7 +1259,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
         GST_ELEMENT_ERROR(demux, STREAM, DEMUX,
           ("M3U8 data seems to be corrupt as it results in permanent 403s. Broken URL: %s, Failure count: %d, Error: %s",
             fragment->uri, (int) demux->download_forbidden_count, err->message),
-          ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+          ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
         gst_task_pause (demux->stream_task); // avoid retrying immediatly
       }
 
