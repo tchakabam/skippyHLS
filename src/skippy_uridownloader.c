@@ -503,7 +503,7 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
 
   // There was an error downloading, quit quietly
   if (downloader->priv->err || downloader->priv->flushing) {
-    GST_WARNING ("Error or flushing, dropping buffer");
+    GST_DEBUG ("Error or flushing, dropping buffer");
     return GST_PAD_PROBE_DROP;
   }
 
