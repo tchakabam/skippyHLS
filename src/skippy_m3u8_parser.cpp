@@ -13,7 +13,7 @@
 
 #include <glib-object.h>
 
-#include "skippyHLS/SkippyM3UParser.hpp"
+#include "skippyHLS/skippy_m3u8_parser.hpp"
 
 #if ENABLE_DEBUG_LOG
   #define LOG(...) g_message(__VA_ARGS__)
@@ -64,13 +64,14 @@ SkippyM3UParser::SkippyM3UParser()
 :state (STATE_RESET)
 ,subState (SUBSTATE_RESET)
 // Put default values here
-,programId(0)
-,bandwidth(0)
-,index(0)
-,length(0)
-,position(0)
 ,mediaSequenceNo(0)
 ,targetDuration(0)
+,programId(0)
+,bandwidth(0)
+,length(0)
+,index(0)
+,position(0)
+
 {}
 
 SkippyM3UPlaylist SkippyM3UParser::parse(string uri, const string& playlist)

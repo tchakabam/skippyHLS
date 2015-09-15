@@ -5,7 +5,7 @@
 #include "skippyHLS/skippy_m3u8.h"
 #include "skippyHLS/skippy_fragment.h"
 
-#include "skippyHLS/SkippyM3UParser.hpp"
+#include "skippyHLS/skippy_m3u8_parser.hpp"
 
 GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define GST_CAT_DEFAULT skippy_m3u8_debug
@@ -18,8 +18,8 @@ struct SkippyM3U8ClientPrivate
 {
   SkippyM3U8ClientPrivate ()
   :current_index(0)
-  ,playlist("")
   ,playlist_raw(NULL)
+  ,playlist("")
   {
 
   }
@@ -29,8 +29,8 @@ struct SkippyM3U8ClientPrivate
     g_free (playlist_raw);
   }
 
-  gchar* playlist_raw;
   int current_index;
+  gchar* playlist_raw;
   SkippyM3UPlaylist playlist;
   recursive_mutex mutex;
 };

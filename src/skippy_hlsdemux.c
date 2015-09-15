@@ -83,11 +83,9 @@ static gboolean skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * 
 static void skippy_hls_demux_stream_loop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_stop (SkippyHLSDemux * demux);
 static void skippy_hls_demux_pause (SkippyHLSDemux * demux);
-static SkippyFragment *skippy_hls_demux_get_next_fragment (SkippyHLSDemux * demux, SkippyUriDownloaderFetchReturn* fetch_ret, GError ** err);
 static void skippy_hls_demux_reset (SkippyHLSDemux * demux);
 static void skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
-static GstClockTime skippy_hls_demux_get_max_buffer_duration (SkippyHLSDemux * demux);
 static GstFlowReturn skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer);
 static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event);
 
@@ -127,7 +125,6 @@ skippy_hls_demux_class_init (SkippyHLSDemuxClass * klass)
 {
   GObjectClass *gobject_class;
   GstElementClass *element_class;
-  GstBinClass *bin_class;
 
   gobject_class = (GObjectClass *) klass;
   element_class = (GstElementClass *) klass;
@@ -373,7 +370,6 @@ skippy_hls_demux_stop (SkippyHLSDemux *demux)
 static GstStateChangeReturn
 skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
 {
-  GstStateChangeReturn ret;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
 
   GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
@@ -643,8 +639,6 @@ error:
 
 void skippy_hls_demux_update_downstream_events (SkippyHLSDemux *demux, gboolean stream_start, gboolean segment)
 {
-  gboolean have_group_id;
-  guint group_id;
   gchar* stream_id = NULL;
   GstEvent* event = NULL;
 

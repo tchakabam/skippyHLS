@@ -82,7 +82,6 @@ static void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader, gboo
 static GstPadProbeReturn skippy_uri_downloader_src_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 static void skippy_uri_downloader_complete (SkippyUriDownloader * downloader);
 static gboolean skippy_uri_downloader_create_src (SkippyUriDownloader * downloader, gchar* uri);
-static GstStateChangeReturn skippy_uri_downloader_change_state (GstElement *element, GstStateChange transition);
 static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * msg);
 
 // Define class
@@ -90,7 +89,6 @@ static void
 skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 {
   GObjectClass *gobject_class = (GObjectClass *) klass;
-  GstElementClass *gstelement_class = (GstElementClass*) klass;
   GstBinClass *gstbin_class = (GstBinClass*) klass;
 
   gstbin_class = (GstBinClass *) klass;
@@ -707,7 +705,6 @@ static void
 skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
 {
   if (downloader->priv->set_uri) {
-    GstPad* urisrcpad;
     GST_DEBUG ("Unsetting URI source");
 
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
