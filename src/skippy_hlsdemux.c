@@ -444,20 +444,20 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
   // Create message data
   switch (metric) {
   case STAT_TIME_TO_DOWNLOAD_FRAGMENT:
-    GST_DEBUG ("Statistic: STAT_TIME_TO_DOWNLOAD_FRAGMENT");
+    GST_TRACE ("Statistic: STAT_TIME_TO_DOWNLOAD_FRAGMENT");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "fragment-download-time", G_TYPE_UINT64, time_val,
       "fragment-size", G_TYPE_UINT64, (guint64) size,
       NULL);
     break;
   case STAT_TIME_TO_PLAYLIST:
-    GST_DEBUG ("Statistic: STAT_TIME_TO_PLAYLIST");
+    GST_TRACE ("Statistic: STAT_TIME_TO_PLAYLIST");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "time-to-playlist", GST_TYPE_CLOCK_TIME, time_val,
       NULL);
     break;
   case STAT_TIME_OF_FIRST_PLAYLIST:
-    GST_DEBUG ("Statistic: STAT_TIME_OF_FIRST_PLAYLIST");
+    GST_TRACE ("Statistic: STAT_TIME_OF_FIRST_PLAYLIST");
     structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
       "manifest-download-start", GST_TYPE_CLOCK_TIME, GST_CLOCK_TIME_NONE,
       "manifest-download-stop", GST_TYPE_CLOCK_TIME, time_val,
@@ -792,7 +792,7 @@ skippy_hls_demux_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (parent);
 
-  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
+  GST_TRACE_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
 
   switch (event->type) {
     case GST_EVENT_SEEK:
@@ -987,7 +987,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
 static gboolean
 skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event)
 {
-  GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
+  GST_TRACE ("Got %" GST_PTR_FORMAT, event);
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
   GstCaps *caps;
@@ -1190,7 +1190,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   if (!skippy_hls_check_buffer_ahead (demux)) {
     return;
   }
-  GST_DEBUG ("Will try to fetch next fragment ...");
+  GST_TRACE ("Will try to fetch next fragment ...");
 
   //g_usleep (1000*1000);
 
@@ -1219,7 +1219,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     GST_INFO_OBJECT (demux, "This playlist doesn't contain more fragments");
   }
 
-  GST_DEBUG ("Returning finished fragment");
+  GST_TRACE ("Returning finished fragment");
 
   // Handle result from current attempt
   switch (fetch_ret) {
@@ -1283,7 +1283,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     break;
   }
 
-  GST_DEBUG_OBJECT (demux, "Exiting task now ...");
+  GST_TRACE_OBJECT (demux, "Exiting task now ...");
 
   // Handle error
   if (err && !playlist_refresh) {

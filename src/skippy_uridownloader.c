@@ -366,7 +366,7 @@ skippy_uri_downloader_handle_bytes_received (SkippyUriDownloader* downloader,
 static void
 skippy_uri_downloader_handle_eos (SkippyUriDownloader* downloader)
 {
-  GST_DEBUG_OBJECT (downloader, "Got EOS on the data source");
+  GST_TRACE_OBJECT (downloader, "Got EOS on the data source");
   if (downloader->priv->err) {
     GST_WARNING ("Got EOS but error: %s", downloader->priv->err->message);
   } else {
@@ -542,7 +542,7 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
   GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
   GstSegment bytes_segment;
 
-  GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
+  GST_TRACE ("Got %" GST_PTR_FORMAT, event);
 
   switch (GST_EVENT_TYPE(event)) {
   case GST_EVENT_SEGMENT:
@@ -658,7 +658,7 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
     return FALSE;
   }
 
-  GST_DEBUG_OBJECT (downloader, "Setting URI: %s", uri);
+  GST_TRACE_OBJECT (downloader, "Setting URI: %s", uri);
 
   // Set URI
   if (!gst_uri_handler_set_uri (GST_URI_HANDLER (downloader->priv->urisrc), uri, &err)) {
@@ -667,7 +667,7 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
     return FALSE;
   }
 
-  GST_DEBUG ("URI has been applied to handler interface, configuring data source now");
+  GST_TRACE ("URI has been applied to handler interface, configuring data source now");
 
   // Configure source element accordingly
   if (g_object_class_find_property (klass, "compress"))
@@ -685,7 +685,7 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
         gst_structure_set (extra_headers, "Cache-Control", G_TYPE_STRING,
             "no-cache", NULL);
       } else if (refresh) {
-        GST_DEBUG ("Cache-Control set to max-age=0");
+        GST_LOG ("Refreshing item: Cache-Control set to max-age=0");
         gst_structure_set (extra_headers, "Cache-Control", G_TYPE_STRING,
             "max-age=0", NULL);
       }
@@ -705,29 +705,29 @@ static void
 skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
 {
   if (downloader->priv->set_uri) {
-    GST_DEBUG ("Unsetting URI source");
+    GST_TRACE ("Unsetting URI source");
 
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
 
     // Flush only if download got cancelled
     if (downloader->priv->fragment->cancelled && !downloader->priv->err) {
-      GST_DEBUG_OBJECT (downloader, "Sending flush start");
+      GST_TRACE_OBJECT (downloader, "Sending flush start");
 
       downloader->priv->flushing = TRUE;
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
 
-      GST_DEBUG_OBJECT (downloader, "Sending flush stop");
+      GST_TRACE_OBJECT (downloader, "Sending flush stop");
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_stop (TRUE));
     }
 
     // Now we can shut down the element
-    GST_DEBUG ("Setting source element to READY state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
+    GST_TRACE ("Setting source element to READY state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_READY);
 
     // In case of error set element to NULL
     if (downloader->priv->err) {
       /* set the element state to NULL if there was an error otherwise go back to READY state */
-      GST_DEBUG ("Setting source element to NULL state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
+      GST_TRACE ("Setting source element to NULL state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
       gst_element_set_state (downloader->priv->urisrc, GST_STATE_NULL);
     }
     // Set state flag that we have unset URI source
@@ -812,7 +812,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
 
   // From here we expect the streaming thread to call into our event & sync message handlers.
   // This means we have to protect any shared data between our cond wait block and these handlers.
-  GST_DEBUG_OBJECT (downloader, "Waiting to fetch the URI %s", fragment->uri);
+  GST_TRACE_OBJECT (downloader, "Waiting to fetch the URI %s", fragment->uri);
   // We protect the downloaded fragment metadata we share with the 'cancel' function using the object lock here.
   GST_OBJECT_LOCK (downloader);
   /* wait until:
@@ -866,7 +866,7 @@ skippy_uri_downloader_complete (SkippyUriDownloader * downloader)
   // We share this with the cond wait
   downloader->priv->fragment->completed = TRUE;
   //downloader->priv->download_done = TRUE;
-  GST_DEBUG_OBJECT (downloader, "Signaling wait condition");
+  GST_TRACE_OBJECT (downloader, "Signaling wait condition");
   g_cond_signal (&downloader->priv->cond);
   GST_OBJECT_UNLOCK (downloader);
 
@@ -878,14 +878,14 @@ skippy_uri_downloader_complete (SkippyUriDownloader * downloader)
 static void skippy_uri_downloader_cancel (SkippyUriDownloader * downloader, gboolean interrupt)
 {
   GST_OBJECT_LOCK (downloader);
-  GST_DEBUG ("Eventually cancel ongoing download");
+  GST_TRACE_OBJECT (downloader, "Eventually cancel ongoing download");
   if (interrupt) {
     downloader->priv->download_canceled = TRUE;
   }
   if (downloader->priv->fragment) {
     downloader->priv->fragment->cancelled = TRUE;
   }
-  GST_DEBUG_OBJECT (downloader, "Signaling wait condition.");
+  GST_TRACE_OBJECT (downloader, "Signaling wait condition.");
   g_cond_signal (&downloader->priv->cond);
   GST_OBJECT_UNLOCK (downloader);
 }
