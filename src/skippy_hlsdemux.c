@@ -1233,6 +1233,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
     // When failed
+    g_return_if_fail (err);
     GST_INFO ("Fragment fetch error: %s", err->message);
     // Actual download failure
     GST_OBJECT_LOCK (demux);
