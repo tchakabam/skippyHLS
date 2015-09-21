@@ -1233,6 +1233,15 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
     // When failed
+    //TODO: remove this check once we make sure Error instance is initialized in all cases when download fails
+    if (!err) {
+      g_warning ("Error not set but download failed!");
+      if (fragment) {
+        g_object_unref (fragment);
+      }
+      g_free (referrer_uri);
+      return;
+    }
     GST_INFO ("Fragment fetch error: %s", err->message);
     // Actual download failure
     GST_OBJECT_LOCK (demux);
