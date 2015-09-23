@@ -251,21 +251,21 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   // NOTE: we do the string comparison only after the bytes count is off as its more expensive
   // If we are seeking in some way then we wont consider resuming at all.
 #if DOWNLOAD_RESUMING_ENABLED
-  if (downloader->priv->interrupted_downloads_policy == SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_RESUME) {
-    if (G_UNLIKELY(
-      // Did we not complete the previous download?
-       downloader->priv->bytes_loaded != downloader->priv->bytes_total
-       // reset might not be called to prepare a fetch and/or there might be no previous download
-       && next_fragment && downloader->priv->fragment && !downloader->priv->fragment->cancelled
-       // Is it the same URI?
-       && compare_uri_resource_path (next_fragment->uri, downloader->priv->fragment->uri))) {
-      // If the previous download was not completed and we are currently retrying the same
-      // we are not resetting the fields and will later perform a range request to get only
-      // the missing stuff.
-      GST_DEBUG ("Previous download interruption detected");
-      downloader->priv->previous_was_interrupted = TRUE;
-    }
-  } else
+  if (G_LIKELY(downloader->priv->interrupted_downloads_policy == SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_RESUME)
+    && G_UNLIKELY(
+    // Did we not complete the previous download?
+    downloader->priv->bytes_loaded != downloader->priv->bytes_total
+    // reset might not be called to prepare a fetch and/or there might be no previous download
+    && next_fragment && downloader->priv->fragment && !downloader->priv->fragment->cancelled
+    // Is it the same URI?
+    && compare_uri_resource_path (next_fragment->uri, downloader->priv->fragment->uri))) {
+    // If the previous download was not completed and we are currently retrying the same
+    // we are not resetting the fields and will later perform a range request to get only
+    // the missing stuff.
+    GST_DEBUG ("Previous download interruption detected");
+    downloader->priv->previous_was_interrupted = TRUE;
+  }
+  else
 #endif
   {
     // If above condition does not hold: Fresh new download state
