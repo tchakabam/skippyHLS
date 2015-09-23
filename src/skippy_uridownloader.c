@@ -596,9 +596,11 @@ skippy_uri_downloader_create_src (SkippyUriDownloader * downloader, gchar* uri)
   downloader->priv->urisrc = gst_element_make_from_uri (GST_URI_SRC, uri, NULL, &err);
   if (err) {
     GST_ERROR ("Could not create HTTP source: %s", err->message);
+    g_warning ("FATAL: Could not create HTTP source: %s", err->message);
     g_clear_error (&err);
     return FALSE;
   }
+
   // Add URI source element to bin
   GST_DEBUG ("Added source: %s", GST_ELEMENT_NAME (downloader->priv->urisrc));
 
@@ -744,17 +746,18 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
 static SkippyUriDownloaderFetchReturn
 skippy_uri_downloader_handle_failure (SkippyUriDownloader * downloader, GError ** err)
 {
-  skippy_uri_downloader_deinit_uri_src (downloader);
-  // Check for error from internal bus
-  if (downloader->priv->err) {
-    // Copy error but our own one for internal processing
-    GST_ERROR_OBJECT (downloader, "Error fetching URI: %s", downloader->priv->err->message);
-    *err = g_error_copy (downloader->priv->err);
+  g_return_val_if_fail(downloader->priv->err, SKIPPY_URI_DOWNLOADER_VOID);
 
-    // Did we miss anything?
-    GST_DEBUG ("Error after loading %d bytes, missing %d bytes",
-      (int) downloader->priv->bytes_loaded, (int) (downloader->priv->bytes_total - downloader->priv->bytes_loaded));
-  }
+  skippy_uri_downloader_deinit_uri_src (downloader);
+
+  // Copy error but our own one for internal processing
+  GST_ERROR_OBJECT (downloader, "Error fetching URI: %s", downloader->priv->err->message);
+  *err = g_error_copy (downloader->priv->err);
+
+  // Did we miss anything?
+  GST_DEBUG ("Error after loading %d bytes, missing %d bytes",
+    (int) downloader->priv->bytes_loaded, (int) (downloader->priv->bytes_total - downloader->priv->bytes_loaded));
+
   return SKIPPY_URI_DOWNLOADER_FAILED;
 }
 
@@ -766,10 +769,12 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err)
 {
   GstStateChangeReturn ret;
+  SkippyUriDownloaderFetchReturn fetch_ret;
+  gboolean is_canceled;
 
-  g_return_val_if_fail (downloader, SKIPPY_URI_DOWNLOADER_FAILED);
-  g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_FAILED);
-  g_return_val_if_fail (*err == NULL, SKIPPY_URI_DOWNLOADER_FAILED);
+  g_return_val_if_fail (downloader, SKIPPY_URI_DOWNLOADER_VOID);
+  g_return_val_if_fail (fragment, SKIPPY_URI_DOWNLOADER_VOID);
+  g_return_val_if_fail (*err == NULL, SKIPPY_URI_DOWNLOADER_VOID);
 
   // Let's first make sure we are completely reset, but pass in the current fragment
   // to eventually prepare to resume a previous broken download ...
@@ -784,7 +789,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   // Make sure we have our data source component set up and wired
   if (!skippy_uri_downloader_create_src (downloader, fragment->uri)) {
     g_mutex_unlock (&downloader->priv->download_lock);
-    return SKIPPY_URI_DOWNLOADER_FAILED;
+    return SKIPPY_URI_DOWNLOADER_VOID;
   }
 
   // If we were interrupted previously, resume at this point
@@ -798,7 +803,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
     && skippy_uri_downloader_set_range (downloader, fragment->range_start, fragment->range_end))) {
     GST_WARNING_OBJECT (downloader, "Failed to set URL or byte-range on data source");
     g_mutex_unlock (&downloader->priv->download_lock);
-    return skippy_uri_downloader_handle_failure (downloader, err);
+    return SKIPPY_URI_DOWNLOADER_VOID;
   }
 
   // Let data flow ...
@@ -807,7 +812,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
   if (ret == GST_STATE_CHANGE_FAILURE) {
     g_mutex_unlock (&downloader->priv->download_lock);
     GST_ERROR ("Failed setting URI src to PLAYING state");
-    return skippy_uri_downloader_handle_failure (downloader, err);
+    return SKIPPY_URI_DOWNLOADER_VOID;
   }
 
   // From here we expect the streaming thread to call into our event & sync message handlers.
@@ -827,7 +832,7 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
     GST_DEBUG ("Condition has been signalled");
   }
 
-  gboolean is_canceled = downloader->priv->download_canceled;
+  is_canceled = downloader->priv->download_canceled || fragment->cancelled;
 
   if (downloader->priv->download_canceled) {
     downloader->priv->download_canceled = FALSE;
@@ -844,12 +849,13 @@ SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDo
 
   // Handle errors (even when completed data)
   if (downloader->priv->err) {
+    fetch_ret = skippy_uri_downloader_handle_failure (downloader, err);
     g_mutex_unlock (&downloader->priv->download_lock);
-    return skippy_uri_downloader_handle_failure (downloader, err);
+    return fetch_ret;
   }
 
   // Cancellation (this is when we have been intendendly cancelled)
-  if (fragment->cancelled || is_canceled) {
+  if (is_canceled) {
     g_mutex_unlock (&downloader->priv->download_lock);
     return SKIPPY_URI_DOWNLOADER_CANCELLED;
   }
