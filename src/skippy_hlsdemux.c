@@ -175,8 +175,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   // Internal elements
   demux->download_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-download-queue");
   demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
-  demux->downloader = skippy_uri_downloader_new (SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_RESUME);
-  demux->playlist_downloader = skippy_uri_downloader_new (SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_DISCARD);
+  demux->downloader = skippy_uri_downloader_new (TRUE);
+  demux->playlist_downloader = skippy_uri_downloader_new (FALSE);
 
   demux->queue_proxy_pad = gst_pad_new ("skippyhlsdemux-queue-proxy-pad", GST_PAD_SINK);
   gst_pad_set_element_private (demux->queue_proxy_pad, demux);

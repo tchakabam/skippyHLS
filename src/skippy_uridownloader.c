@@ -43,14 +43,6 @@ G_DEFINE_TYPE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_BIN);
    (G_TYPE_INSTANCE_GET_PRIVATE ((obj), \
     TYPE_SKIPPY_URI_DOWNLOADER, SkippyUriDownloaderPrivate))
 
-#define DOWNLOAD_RESUMING_ENABLED TRUE
-
-enum
-{
-  PROP_0,
-  PROP_INTERRUPTED_DOWNLOADS_POLICY
-};
-
 struct _SkippyUriDownloaderPrivate
 {
   SkippyFragment *fragment;
@@ -64,7 +56,7 @@ struct _SkippyUriDownloaderPrivate
   GMutex download_lock;
 
   gboolean flushing;
-  SkippyUriDownloaderInterruptedDownloadPolicy interrupted_downloads_policy;
+  gboolean resume_interrupted_downloads;
   gboolean previous_was_interrupted;
   gboolean set_uri;
   gboolean fetching;
@@ -92,40 +84,6 @@ static gboolean skippy_uri_downloader_create_src (SkippyUriDownloader * download
 static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * msg);
 
 
-static void
-skippy_uri_downloader_set_property (GObject * object, guint prop_id,
-    const GValue * value, GParamSpec * pspec)
-{
-  SkippyUriDownloader *self = SKIPPY_URI_DOWNLOADER (object);
-
-  switch (prop_id) {
-    case PROP_INTERRUPTED_DOWNLOADS_POLICY:
-      if (self->priv->interrupted_downloads_policy == SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_NOT_SET) {
-        self->priv->interrupted_downloads_policy = g_value_get_uchar (value);
-      }
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
-  }
-}
-
-static void
-skippy_uri_downloader_get_property (GObject * object, guint prop_id,
-    GValue * value, GParamSpec * pspec)
-{
-  SkippyUriDownloader *self = SKIPPY_URI_DOWNLOADER (object);
-
-  switch (prop_id) {
-    case PROP_INTERRUPTED_DOWNLOADS_POLICY:
-      g_value_set_uchar (value, self->priv->interrupted_downloads_policy);
-      break;
-    default:
-      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
-      break;
-  }
-}
-
 // Define class
 static void
 skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
@@ -139,26 +97,19 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
 
   gobject_class->dispose = skippy_uri_downloader_dispose;
   gobject_class->finalize = skippy_uri_downloader_finalize;
-  gobject_class->get_property = skippy_uri_downloader_get_property;
-  gobject_class->set_property = skippy_uri_downloader_set_property;
 
   //gstelement_class->change_state = skippy_uri_downloader_change_state;
   gstbin_class->handle_message = skippy_uri_downloader_handle_message;
-
-  g_object_class_install_property (gobject_class,
-      PROP_INTERRUPTED_DOWNLOADS_POLICY,
-      g_param_spec_uchar ("interrupted-downloads-policy", "Interrupted downloads policy",
-          "Whether interrupted downloads should be discarded or not", 0, 2, (unsigned char) SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_RESUME,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
 
 // Constructor
 SkippyUriDownloader*
-skippy_uri_downloader_new (SkippyUriDownloaderInterruptedDownloadPolicy policy)
+skippy_uri_downloader_new (gboolean resume_interrupted_downloads)
 {
-  SkippyUriDownloader* downloader = g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, "interrupted-downloads-policy", policy, NULL);
+  SkippyUriDownloader* downloader = g_object_new (TYPE_SKIPPY_URI_DOWNLOADER, NULL);
+  downloader->priv->resume_interrupted_downloads = resume_interrupted_downloads;
   return downloader;
 }
 
@@ -179,7 +130,6 @@ skippy_uri_downloader_init (SkippyUriDownloader * downloader)
   downloader->priv->fetching = FALSE;
   downloader->priv->set_uri = FALSE;
   downloader->priv->download_canceled = FALSE;
-  downloader->priv->interrupted_downloads_policy = SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_NOT_SET;
   downloader->priv->previous_was_interrupted = FALSE;
   downloader->priv->urisrcpad_probe_id = 0;
 
@@ -250,8 +200,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   // We can check that its the same by comparing the URIs and the loaded bytes count
   // NOTE: we do the string comparison only after the bytes count is off as its more expensive
   // If we are seeking in some way then we wont consider resuming at all.
-#if DOWNLOAD_RESUMING_ENABLED
-  if (G_LIKELY(downloader->priv->interrupted_downloads_policy == SKIPPY_URI_DOWNLOADER_INTERRUPTED_DOWNLOADS_POLICY_RESUME)
+  if (G_LIKELY(downloader->priv->resume_interrupted_downloads)
     && G_UNLIKELY(
     // Did we not complete the previous download?
     downloader->priv->bytes_loaded != downloader->priv->bytes_total
@@ -266,7 +215,6 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
     downloader->priv->previous_was_interrupted = TRUE;
   }
   else
-#endif
   {
     // If above condition does not hold: Fresh new download state
     downloader->priv->bytes_loaded = 0;
