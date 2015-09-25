@@ -89,6 +89,9 @@ static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
 static GstFlowReturn skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer);
 static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event);
 
+/* Helper functions */
+static void report_and_log_permanent_forbidden_error (const SkippyHLSDemux *demux, const gchar* uri ,const GError* error);
+
 static GstObject* find_first_parent_object_with_property (GstObject* self, const gchar* prop, gboolean toplevel)
 {
   GObjectClass *klass;
@@ -1259,18 +1262,9 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
       // This should only happen once in a row - if we detect a broken M3U8, notify the application
       if (demux->download_forbidden_count > 1) {
-        GST_ELEMENT_ERROR(demux, STREAM, DEMUX,
-          ("M3U8 data seems to be corrupt as it results in permanent 403s. Broken URL: %s, Failure count: %d, Error: %s",
-            fragment->uri, (int) demux->download_forbidden_count, err->message),
-          ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
+        report_and_log_permanent_forbidden_error (demux, fragment->uri, err);
         gst_task_pause (demux->stream_task); // avoid retrying immediatly
       }
-
-      // mipesic - what if refresh playlist operation fails - in current implementation we will
-      // continue with fetching expired segment over and over again. We can do something with return code
-      // of refresh playlist operation to prevent that.
-      // SH: Prevent what? In that case we will also retry fetching the playlist - we just provide the best effort. But
-      // for any kind of failure exponential backoff is applied.
       skippy_hls_demux_refresh_playlist (demux);
       playlist_refresh = TRUE;
     }
@@ -1322,3 +1316,19 @@ void skippy_hlsdemux_setup (void)
       TYPE_SKIPPY_HLS_DEMUX);
 }
 
+static void report_and_log_permanent_forbidden_error (const SkippyHLSDemux *demux, const gchar* uri,const GError* err)
+{
+  gchar** playlist_lines = NULL;
+  gchar** temp_playlist_lines = NULL;
+  
+  GST_ELEMENT_ERROR(demux, STREAM, DEMUX,
+    ("M3U8 data seems to be corrupt as it results in permanent 403s. Broken URL: %s, Failure count: %d, Error: %s",
+      uri, (int) demux->download_forbidden_count, err->message),
+    ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
+  
+  playlist_lines = temp_playlist_lines = g_strsplit (skippy_m3u8_client_get_current_raw_data (demux->client), "\n", 0);
+  for (; *temp_playlist_lines; temp_playlist_lines++) {
+    GST_ERROR("%s", *temp_playlist_lines);
+  }
+  g_strfreev (playlist_lines);
+}
