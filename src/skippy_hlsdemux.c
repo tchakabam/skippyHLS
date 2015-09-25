@@ -352,11 +352,16 @@ skippy_hls_demux_restart (SkippyHLSDemux * demux, gboolean force)
 //
 // MT-safe
 static void
-skippy_hls_demux_stop (SkippyHLSDemux *demux)
+    skippy_hls_demux_stop (SkippyHLSDemux *demux)
 {
   // Let's join the streaming thread
   GST_DEBUG ("Stopping task ...");
-  g_return_if_fail (gst_task_get_state (demux->stream_task) == GST_TASK_PAUSED);
+  if (gst_task_get_state (demux->stream_task) != GST_TASK_PAUSED) {
+    skippy_hls_demux_pause(demux);
+  }
+  
+  g_return_if_fail(gst_task_get_state (demux->stream_task) == GST_TASK_PAUSED);
+
   if (gst_task_get_state (demux->stream_task) != GST_TASK_STOPPED) {
     gst_task_join (demux->stream_task);
   }
