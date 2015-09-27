@@ -71,7 +71,6 @@ SkippyM3UParser::SkippyM3UParser()
 ,length(0)
 ,index(0)
 ,position(0)
-
 {}
 
 SkippyM3UPlaylist SkippyM3UParser::parse(string uri, const string& playlist)
@@ -195,8 +194,8 @@ void SkippyM3UParser::evalSubstate() {
 
     LOG("Sub-State to: RESET (end of list)");
 
-  subState = SUBSTATE_END;
-
+    subState = SUBSTATE_END;
+    
   } else {
 
     LOG("Sub-State to: RESET (unknown token): %s", token.c_str());
@@ -315,6 +314,7 @@ void SkippyM3UParser::update(SkippyM3UPlaylist& playlist) {
       playlist.targetDuration = targetDuration * UNIT_SECONDS;
       playlist.totalDuration = position;
       playlist.type = playlistType;
+      playlist.isComplete = true;
       break;
     default:
       break;

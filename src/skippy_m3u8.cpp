@@ -7,6 +7,10 @@
 
 #include "skippyHLS/skippy_m3u8_parser.hpp"
 
+extern "C" {
+  #include "skippy_hls_priv.h"
+}
+
 GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define GST_CAT_DEFAULT skippy_m3u8_debug
 
@@ -87,20 +91,27 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
 }
 
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
-gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer)
+gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer, GError** error)
 {
   SkippyM3UParser p;
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
   if (!playlist) {
+    *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INVALID_UTF_CONTENT, "", NULL);
     return FALSE;
   }
   {
     lock_guard<recursive_mutex> lock(client->priv->mutex);
     string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
     client->priv->playlist = p.parse(loaded_playlist_uri, playlist);
-    // Free the old raw data and replace by new one
-    g_free (client->priv->playlist_raw); // This can be called safely with NULL
+    
+    //update raw playlist
+    g_free (client->priv->playlist_raw);
     client->priv->playlist_raw = playlist;
+    
+    if (!client->priv->playlist.isComplete) {
+      *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE, "", (NULL));
+      return FALSE;
+    }
   }
   return TRUE;
 }
