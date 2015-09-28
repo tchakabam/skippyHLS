@@ -629,7 +629,9 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   GST_OBJECT_LOCK (demux);
   
   if (G_UNLIKELY(demux->playlist == NULL)) {
+    GST_OBJECT_UNLOCK (demux);
     REPORT_FATAL_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
+    goto error;
   }
   
   skippy_m3u8_client_load_playlist (demux->client, uri, demux->playlist, &error);
