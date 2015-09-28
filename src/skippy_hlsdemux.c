@@ -484,22 +484,13 @@ skippy_hls_demux_query_location (SkippyHLSDemux * demux)
 {
   GstQuery* query = gst_query_new_uri ();
   gboolean ret = gst_pad_peer_query (demux->sinkpad, query);
-  gboolean permanent;
-  gchar *uri;
+  gchar *uri = NULL;
 
   if (ret) {
-    gst_query_parse_uri_redirection (query, &uri);
-    gst_query_parse_uri_redirection_permanent (query, &permanent);
-
-    /* Only use the redirect target for permanent redirects */
-    if (!permanent || uri == NULL) {
-      g_free (uri);
-      gst_query_parse_uri (query, &uri);
-    }
-    return uri;
+    gst_query_parse_uri (query, &uri);
   }
   gst_query_unref (query);
-  return NULL;
+  return uri;
 }
 
 // Queries current playback position from downstream element
