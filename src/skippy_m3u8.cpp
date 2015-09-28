@@ -96,7 +96,7 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
   SkippyM3UParser p;
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
   if (!playlist) {
-    *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INVALID_UTF_CONTENT, "", NULL);
+    *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INVALID_UTF_CONTENT, "%s", "");
     return FALSE;
   }
   {
@@ -109,7 +109,7 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
     client->priv->playlist_raw = playlist;
     
     if (!client->priv->playlist.isComplete) {
-      *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE, "", (NULL));
+      *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE, "%s", "");
       return FALSE;
     }
   }

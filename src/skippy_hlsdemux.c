@@ -1069,7 +1069,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     
     if (load_err) {
       if (g_error_matches(load_err, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
-        GST_ELEMENT_ERROR (demux, RESOURCE, READ,  ("While refreshing playlist: Incomplete M3U8 data."), (("%s", skippy_m3u8_client_get_current_raw_data (demux->client))));
+        GST_ELEMENT_ERROR (demux, RESOURCE, READ,  ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
       }
       else {
         GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
