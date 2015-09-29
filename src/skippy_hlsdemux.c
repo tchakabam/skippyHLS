@@ -1076,17 +1076,17 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     // Load M3U8 buffer into parser
     buf = skippy_uri_downloader_get_buffer (demux->playlist_downloader);
     
-    skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf, &load_err);
+    g_clear_error (&err);
+    skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf, &err);
     
-    if (load_err) {
-      if (g_error_matches(load_err, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
+    if (err) {
+      if (g_error_matches(err, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
         REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
       }
       else {
         REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
       }
       ret = FALSE;
-      g_clear_error (&load_err);
       break;
     }
     
@@ -1097,7 +1097,6 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   case SKIPPY_URI_DOWNLOADER_VOID:
     if (err) {
       GST_ERROR ("Error updating playlist: %s", err->message);
-      g_clear_error (&err);
     }
     ret = FALSE;
     break;
@@ -1106,7 +1105,8 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (buf) {
     gst_buffer_unref (buf);
   }
-
+  
+  g_clear_error (&err);
   g_free (main_playlist_uri);
   g_free (current_playlist);
   return ret;
