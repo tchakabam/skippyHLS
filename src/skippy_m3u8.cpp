@@ -102,16 +102,17 @@ gboolean skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gcha
   {
     lock_guard<recursive_mutex> lock(client->priv->mutex);
     string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
-    client->priv->playlist = p.parse(loaded_playlist_uri, playlist);
+    SkippyM3UPlaylist loaded_playlist = p.parse(loaded_playlist_uri, playlist);
     
     //update raw playlist
     g_free (client->priv->playlist_raw);
     client->priv->playlist_raw = playlist;
     
-    if (!client->priv->playlist.isComplete) {
+    if (!loaded_playlist.isComplete) {
       *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE, "%s", "");
       return FALSE;
     }
+    client->priv->playlist = loaded_playlist;
   }
   return TRUE;
 }

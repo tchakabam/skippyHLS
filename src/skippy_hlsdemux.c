@@ -367,7 +367,7 @@ skippy_hls_demux_restart (SkippyHLSDemux * demux, gboolean force)
 //
 // MT-safe
 static void
-    skippy_hls_demux_stop (SkippyHLSDemux *demux)
+skippy_hls_demux_stop (SkippyHLSDemux *demux)
 {
   // Let's join the streaming thread
   GST_DEBUG ("Stopping task ...");
@@ -1310,7 +1310,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
         ("M3U8 data seems to be corrupt as it results in permanent 403s. Broken URL: %s, Failure count: %d, Error: %s",
           fragment->uri, (int) demux->download_forbidden_count, err->message),
         ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
-        gst_task_pause (demux->stream_task); // avoid retrying immediatly
       }
       skippy_hls_demux_refresh_playlist (demux);
       playlist_refresh = TRUE;
