@@ -34,8 +34,8 @@
 
 #include <glib.h>
 
-#define GST_CAT_DEFAULT uridownloader_debug
-GST_DEBUG_CATEGORY (uridownloader_debug);
+#define GST_CAT_DEFAULT skippy_uridownloader_debug
+GST_DEBUG_CATEGORY (skippy_uridownloader_debug);
 
 G_DEFINE_TYPE (SkippyUriDownloader, skippy_uri_downloader, GST_TYPE_BIN);
 
@@ -101,7 +101,7 @@ skippy_uri_downloader_class_init (SkippyUriDownloaderClass * klass)
   //gstelement_class->change_state = skippy_uri_downloader_change_state;
   gstbin_class->handle_message = skippy_uri_downloader_handle_message;
 
-  GST_DEBUG_CATEGORY_INIT (uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
+  GST_DEBUG_CATEGORY_INIT (skippy_uridownloader_debug, "skippyhls-uridownloader", 0, "URI downloader");
 }
 
 // Constructor
