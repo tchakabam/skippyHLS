@@ -1044,7 +1044,6 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   SkippyFragment *download;
   GstBuffer *buf = NULL;
   GError* err = NULL;
-  GError* load_err = NULL;
   SkippyUriDownloaderFetchReturn fetch_ret;
   gboolean ret = FALSE;
   gchar *current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
