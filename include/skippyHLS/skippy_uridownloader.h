@@ -68,7 +68,7 @@ struct _SkippyUriDownloaderClass
 GType skippy_uri_downloader_get_type (void);
 
 // URI can be NULL (then source will be created on demand with first fetch)
-SkippyUriDownloader * skippy_uri_downloader_new ();
+SkippyUriDownloader * skippy_uri_downloader_new (gboolean resume_interrupted_downloads);
 
 void skippy_uri_downloader_prepare (SkippyUriDownloader * downloader, gchar* uri);
 SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,

@@ -27,7 +27,7 @@ typedef std::vector<SkippyM3UItem> SkippyM3UPlaylistItems;
 struct SkippyM3UPlaylist
 {
   SkippyM3UPlaylist(std::string uri)
-  :uri(uri)
+  : version(0), programId(0), sequenceNo(0), bandwidthKbps(0), targetDuration(0), totalDuration(0), uri(uri), isComplete(false)
   {}
 
   uint64_t version;
@@ -40,6 +40,7 @@ struct SkippyM3UPlaylist
   std::string resolution;
   std::string uri;
   std::string type;
+  bool isComplete;
 
   SkippyM3UPlaylistItems items;
 };
@@ -106,7 +107,7 @@ private:
   double length;
   uint64_t index;
   uint64_t position;
-
+  
   // URI state vars
   std::string url;
 };

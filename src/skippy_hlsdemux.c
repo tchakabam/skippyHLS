@@ -31,6 +31,7 @@
 #include <math.h>
 
 #include "skippyHLS/skippy_hlsdemux.h"
+#include "skippy_hls_priv.h"
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
 #define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
@@ -56,6 +57,20 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
 GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 #define GST_CAT_DEFAULT skippy_hls_demux_debug
 #define SKIPPY_HLS_DOWNLOAD_AHEAD "skippy-download-ahead"
+
+//NOTE: if an error is considered recoverable from category will be STREAM, code DEMUX.
+#define REPORT_NON_FATAL_ERROR(el, text, debug) GST_ELEMENT_ERROR(el, STREAM, DEMUX, text, debug)
+#define REPORT_FATAL_ERROR(el, domain, code, text, debug)  \
+G_STMT_START {                                             \
+  if (G_UNLIKELY(GST_ ## domain ## _ERROR == GST_STREAM_ERROR && GST_ ## domain ## _ERROR_ ## code == GST_STREAM_ERROR_DEMUX)) {     \
+    g_warning ("For fatal errors please do not use domain STREAM and code DEMUX"); \
+  }                                                         \
+  else {                                                    \
+    GST_ELEMENT_ERROR(el, domain, code, text, debug);       \
+  }                                                         \
+} G_STMT_END                                                \
+
+
 
 typedef enum
 {
@@ -175,8 +190,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   // Internal elements
   demux->download_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-download-queue");
   demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
-  demux->downloader = skippy_uri_downloader_new ();
-  demux->playlist_downloader = skippy_uri_downloader_new ();
+  demux->downloader = skippy_uri_downloader_new (TRUE);
+  demux->playlist_downloader = skippy_uri_downloader_new (FALSE);
 
   demux->queue_proxy_pad = gst_pad_new ("skippyhlsdemux-queue-proxy-pad", GST_PAD_SINK);
   gst_pad_set_element_private (demux->queue_proxy_pad, demux);
@@ -352,7 +367,7 @@ skippy_hls_demux_restart (SkippyHLSDemux * demux, gboolean force)
 //
 // MT-safe
 static void
-    skippy_hls_demux_stop (SkippyHLSDemux *demux)
+skippy_hls_demux_stop (SkippyHLSDemux *demux)
 {
   // Let's join the streaming thread
   GST_DEBUG ("Stopping task ...");
@@ -591,6 +606,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 {
   gchar* uri = NULL;
   guint64 timestamp = (guint64) gst_util_get_timestamp ();
+  GError* error = NULL;
 
   // Query the playlist URI
   uri = skippy_hls_demux_query_location (demux);
@@ -602,9 +618,23 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
   // Parse main playlist - lock the object for this
   GST_OBJECT_LOCK (demux);
-  if (demux->playlist == NULL || !skippy_m3u8_client_load_playlist (demux->client, uri, demux->playlist)) {
+  
+  if (G_UNLIKELY(demux->playlist == NULL)) {
     GST_OBJECT_UNLOCK (demux);
-    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
+    REPORT_FATAL_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
+    goto error;
+  }
+  
+  skippy_m3u8_client_load_playlist (demux->client, uri, demux->playlist, &error);
+  
+  if (G_UNLIKELY(error)) {
+    GST_OBJECT_UNLOCK (demux);
+    if (g_error_matches(error, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
+      REPORT_FATAL_ERROR (demux, RESOURCE, READ,  ("First playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+    }
+    else {
+      REPORT_FATAL_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
+    }
     goto error;
   }
 
@@ -630,6 +660,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
 error:
   g_free (uri);
+  g_clear_error (&error);
   return;
 }
 
@@ -1043,11 +1074,21 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_PLAYLIST, download->download_stop_time - download->download_start_time, 0);
     // Load M3U8 buffer into parser
     buf = skippy_uri_downloader_get_buffer (demux->playlist_downloader);
-    if (!skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf)) {
-      GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
+    
+    g_clear_error (&err);
+    skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf, &err);
+    
+    if (err) {
+      if (g_error_matches(err, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
+        REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+      }
+      else {
+        REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
+      }
       ret = FALSE;
       break;
     }
+    
     ret = TRUE;
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
@@ -1055,7 +1096,6 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   case SKIPPY_URI_DOWNLOADER_VOID:
     if (err) {
       GST_ERROR ("Error updating playlist: %s", err->message);
-      g_clear_error (&err);
     }
     ret = FALSE;
     break;
@@ -1064,7 +1104,8 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (buf) {
     gst_buffer_unref (buf);
   }
-
+  
+  g_clear_error (&err);
   g_free (main_playlist_uri);
   g_free (current_playlist);
   return ret;
@@ -1255,18 +1296,11 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
       // This should only happen once in a row - if we detect a broken M3U8, notify the application
       if (demux->download_forbidden_count > 1) {
-        GST_ELEMENT_ERROR(demux, STREAM, DEMUX,
-          ("M3U8 data seems to be corrupt as it results in permanent 403s. Broken URL: %s, Failure count: %d, Error: %s",
-            fragment->uri, (int) demux->download_forbidden_count, err->message),
-          ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
-        gst_task_pause (demux->stream_task); // avoid retrying immediatly
+        REPORT_NON_FATAL_ERROR(demux,
+        ("M3U8 data seems to be corrupt as it results in permanent 403s. Broken URL: %s, Failure count: %d, Error: %s",
+          fragment->uri, (int) demux->download_forbidden_count, err->message),
+        ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
       }
-
-      // mipesic - what if refresh playlist operation fails - in current implementation we will
-      // continue with fetching expired segment over and over again. We can do something with return code
-      // of refresh playlist operation to prevent that.
-      // SH: Prevent what? In that case we will also retry fetching the playlist - we just provide the best effort. But
-      // for any kind of failure exponential backoff is applied.
       skippy_hls_demux_refresh_playlist (demux);
       playlist_refresh = TRUE;
     }
@@ -1318,3 +1352,11 @@ void skippy_hlsdemux_setup (void)
       TYPE_SKIPPY_HLS_DEMUX);
 }
 
+G_GNUC_INTERNAL
+GQuark skippy_hls_error_quark(void) {
+  static GQuark skippy_hls_quark;
+  if (!skippy_hls_quark) {
+    skippy_hls_quark = g_quark_from_static_string ("skippy-hls-error-quark");
+  }
+  return skippy_hls_quark;
+}
