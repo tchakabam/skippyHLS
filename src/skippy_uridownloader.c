@@ -705,7 +705,7 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
 static void
 skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
 {
-  gboolean isCanceled = FALSE;
+  gboolean is_canceled = FALSE;
   
   if (downloader->priv->set_uri) {
     GST_TRACE ("Unsetting URI source");
@@ -713,8 +713,8 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_PAUSED);
 
     // Flush only if download got cancelled
-    isCanceled = downloader->priv->fragment->cancelled && !downloader->priv->err;
-    if (isCanceled) {
+    is_canceled = downloader->priv->fragment->cancelled && !downloader->priv->err;
+    if (is_canceled) {
       GST_TRACE_OBJECT (downloader, "Sending flush start");
       downloader->priv->flushing = TRUE;
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_start ());
@@ -723,7 +723,7 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     GST_TRACE ("Setting source element to READY state (%s)", GST_ELEMENT_NAME (downloader->priv->urisrc));
     gst_element_set_state (downloader->priv->urisrc, GST_STATE_READY);
     
-    if (isCanceled) {
+    if (is_canceled) {
       GST_TRACE_OBJECT (downloader, "Sending flush stop");
       gst_element_send_event (GST_ELEMENT(downloader->priv->urisrc), gst_event_new_flush_stop (TRUE));
     }
