@@ -205,7 +205,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
     // Did we not complete the previous download?
     downloader->priv->bytes_loaded != downloader->priv->bytes_total
     // reset might not be called to prepare a fetch and/or there might be no previous download
-    && next_fragment && downloader->priv->fragment && !downloader->priv->fragment->cancelled
+    && next_fragment && downloader->priv->fragment
     // Is it the same URI?
     && compare_uri_resource_path (next_fragment->uri, downloader->priv->fragment->uri))) {
     // If the previous download was not completed and we are currently retrying the same
