@@ -195,7 +195,7 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
   skippy_uri_downloader_cancel (downloader, FALSE);
 
   g_mutex_lock (&downloader->priv->download_lock);
-
+  
   // Is this a retrial from an unfinished download?
   // We can check that its the same by comparing the URIs and the loaded bytes count
   // NOTE: we do the string comparison only after the bytes count is off as its more expensive
@@ -211,7 +211,9 @@ skippy_uri_downloader_reset (SkippyUriDownloader * downloader, SkippyFragment* n
     // If the previous download was not completed and we are currently retrying the same
     // we are not resetting the fields and will later perform a range request to get only
     // the missing stuff.
-    GST_DEBUG ("Previous download interruption detected");
+    GST_WARNING ("Previous download interruption detected");
+    GST_WARNING ("Loaded: %d bytes, total is: %d bytes",
+                 (int) downloader->priv->bytes_loaded, (int) (downloader->priv->bytes_total));
     downloader->priv->previous_was_interrupted = TRUE;
   }
   else
@@ -510,7 +512,6 @@ skippy_uri_downloader_src_probe_buffer (GstPad *pad, GstPadProbeInfo *info, gpoi
   downloader->priv->fragment->size += bytes;
   // Count bytes up
   downloader->priv->bytes_loaded += bytes;
-
   // Triggers message
   skippy_uri_downloader_handle_bytes_received (downloader,
     downloader->priv->fragment->start_time, downloader->priv->fragment->stop_time,
@@ -756,7 +757,7 @@ skippy_uri_downloader_handle_failure (SkippyUriDownloader * downloader, GError *
     *err = g_error_copy (downloader->priv->err);
 
     // Did we miss anything?
-    GST_DEBUG ("Error after loading %d bytes, missing %d bytes",
+    GST_WARNING ("Error after loading %d bytes, missing %d bytes",
       (int) downloader->priv->bytes_loaded, (int) (downloader->priv->bytes_total - downloader->priv->bytes_loaded));
   }
   return SKIPPY_URI_DOWNLOADER_FAILED;
