@@ -324,6 +324,7 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   // Signal the thread in case it's waiting
   GST_OBJECT_LOCK (demux);
   demux->continuing = TRUE;
+  demux->download_failed_count = 0;
   GST_TASK_SIGNAL (demux->stream_task);
   g_cond_signal (&demux->wait_cond);
   GST_OBJECT_UNLOCK (demux);
