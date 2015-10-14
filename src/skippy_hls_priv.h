@@ -2,6 +2,7 @@
 
 #include <glib.h>
 
+#define SKIPPY_HLS_DOWNLOAD_AHEAD "skippy-download-ahead"
 #define SKIPPY_HLS_ERROR skippy_hls_error_quark()
 G_GNUC_INTERNAL GQuark skippy_hls_error_quark(void);
 

@@ -737,10 +737,6 @@ skippy_uri_downloader_deinit_uri_src (SkippyUriDownloader * downloader)
     }
     // Set state flag that we have unset URI source
     downloader->priv->set_uri = FALSE;
-
-    gst_element_send_event (GST_ELEMENT(downloader->priv->typefind), gst_event_new_flush_start ());
-    gst_element_send_event (GST_ELEMENT(downloader->priv->typefind), gst_event_new_flush_stop (TRUE));
-
   }
 }
 
