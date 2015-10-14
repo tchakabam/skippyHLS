@@ -1125,7 +1125,7 @@ skippy_hlsdemux_proxy_pad_remove_sticky_eos (GstPad * pad, GstEvent ** event, gp
 }
 
 static void
-skippy_hlsdemux_on_fragment_downloaded (SkippyHLSDemux *demux)
+skippy_hlsdemux_proxy_pad_reset (SkippyHLSDemux *demux)
 {
   //flush the proxy pad to reset EOS state.
   gst_pad_push_event (demux->queue_proxy_pad, gst_event_new_flush_start ());
@@ -1182,7 +1182,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       skippy_hls_demux_is_caching_allowed (demux), // Allow caching directive
       &err
     );
-    skippy_hlsdemux_on_fragment_downloaded (demux);
+    skippy_hlsdemux_proxy_pad_reset (demux);
   } else {
     GST_INFO_OBJECT (demux, "This playlist doesn't contain more fragments");
   }
