@@ -260,6 +260,7 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
   demux->position = 0;
   demux->position_downloaded = 0;
   demux->download_failed_count = 0;
+  demux->download_forbidden_count = 0;
   demux->continuing = FALSE;
 
   // Get rid of eventual playlist data
@@ -298,6 +299,7 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
   GST_OBJECT_LOCK (demux);
   demux->continuing = TRUE;
   demux->download_failed_count = 0;
+  demux->download_forbidden_count = 0;
   GST_TASK_SIGNAL (demux->stream_task);
   g_cond_signal (&demux->wait_cond);
   GST_OBJECT_UNLOCK (demux);
@@ -874,6 +876,7 @@ skippy_hls_handle_end_of_playlist (SkippyHLSDemux * demux)
   GST_OBJECT_LOCK (demux);
   demux->position = 0;
   demux->position_downloaded = 0;
+  demux->download_forbidden_count = 0;
   GST_OBJECT_UNLOCK (demux);
   gst_task_pause (demux->stream_task);
   gst_pad_send_event (demux->queue_sinkpad, gst_event_new_eos ());
