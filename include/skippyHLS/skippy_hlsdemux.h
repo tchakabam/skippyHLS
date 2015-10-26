@@ -88,6 +88,7 @@ struct _SkippyHLSDemux
   gint download_failed_count;
   gint download_forbidden_count;
   gboolean continuing;
+  gboolean force_secure_hls;
 };
 
 struct _SkippyHLSDemuxClass

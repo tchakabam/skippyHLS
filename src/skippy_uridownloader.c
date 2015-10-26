@@ -556,7 +556,9 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
     break;
   case GST_EVENT_EOS:
     skippy_uri_downloader_handle_eos (downloader);
-    break;
+    // Dropping EOS event to avoid its propagation to the rest of a pipeline.
+    // If we allow EOS to pass through - we would need to explicitly clear it afterwards.
+    return GST_PAD_PROBE_DROP;
   default:
     break;
   }

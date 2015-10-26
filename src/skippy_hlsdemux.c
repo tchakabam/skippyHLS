@@ -104,6 +104,9 @@ static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
 static GstFlowReturn skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer);
 static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event);
 
+/* Utility functions */
+static void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* query_param_name, const gchar* query_param_value);
+
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
 
@@ -181,6 +184,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   gst_segment_init (&demux->segment, GST_FORMAT_TIME);
 
   demux->download_ahead = DEFAULT_BUFFER_DURATION;
+  demux->force_secure_hls = FALSE;
 
   // Thread
   g_cond_init (&demux->wait_cond);
@@ -956,10 +960,13 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   SkippyUriDownloaderFetchReturn fetch_ret;
   gboolean ret = FALSE;
   gchar *current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
-  gchar *main_playlist_uri = skippy_m3u8_client_get_uri (demux->client);
 
   if (!current_playlist) {
     return FALSE;
+  }
+  
+  if (demux->force_secure_hls) {
+    skippy_hls_demux_append_query_param_to_hls_url (&current_playlist, "secure", "true");
   }
 
   // Create a download
@@ -970,7 +977,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   // Download it
   fetch_ret = skippy_uri_downloader_fetch_fragment (demux->playlist_downloader,
     download, // Media fragment to load
-    main_playlist_uri, // Referrer
+    current_playlist, // Referrer
     TRUE, // Compress (good for playlists)
     TRUE, // Refresh (wipe out cached stuff)
     skippy_hls_demux_is_caching_allowed (demux), // Allow caching directive
@@ -990,6 +997,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     if (err) {
       if (g_error_matches(err, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
         REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+        demux->force_secure_hls = TRUE;
       }
       else {
         REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
@@ -1015,7 +1023,6 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   }
   
   g_clear_error (&err);
-  g_free (main_playlist_uri);
   g_free (current_playlist);
   return ret;
 }
@@ -1274,6 +1281,15 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   }
   g_free (referrer_uri);
   g_clear_error (&err);
+}
+
+static
+void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* query_param_name, const gchar* query_param_value)
+{
+  gchar* old_url = *url;
+  const gchar* delimiter = (g_strrstr(*url, "?")) ? "&": "?";
+  *url = g_strconcat (*url, delimiter, query_param_name, "=", query_param_value, NULL);
+  g_free (old_url);
 }
 
 G_GNUC_INTERNAL
