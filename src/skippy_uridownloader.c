@@ -556,6 +556,7 @@ skippy_uri_downloader_src_probe_event (GstPad *pad, GstPadProbeInfo *info, gpoin
     break;
   case GST_EVENT_EOS:
     skippy_uri_downloader_handle_eos (downloader);
+    return GST_PAD_PROBE_DROP;
     break;
   default:
     break;
