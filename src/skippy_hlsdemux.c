@@ -1293,9 +1293,9 @@ void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* q
 }
 
 G_GNUC_INTERNAL
-void skippy_hlsdemux_setup (void)
+void skippy_hlsdemux_setup (guint hls_demux_rank)
 {
-  gst_element_register (NULL, "skippyhlsdemux", GST_RANK_PRIMARY + 100,
+  gst_element_register (NULL, "skippyhlsdemux", hls_demux_rank,
       TYPE_SKIPPY_HLS_DEMUX);
 }
 
