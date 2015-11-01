@@ -103,6 +103,7 @@ static void skippy_hls_demux_link_pads (SkippyHLSDemux * demux);
 static gboolean skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux);
 static GstFlowReturn skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer);
 static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event);
+static gboolean skippy_hls_is_32_bit_ios_build (void);
 
 /* Utility functions */
 static void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* query_param_name, const gchar* query_param_value);
@@ -965,7 +966,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     return FALSE;
   }
   
-  if (demux->force_secure_hls) {
+  if (demux->force_secure_hls && !skippy_hls_is_32_bit_ios_build ()) {
     skippy_hls_demux_append_query_param_to_hls_url (&current_playlist, "secure", "true");
   }
 
@@ -1290,6 +1291,16 @@ void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* q
   const gchar* delimiter = (g_strrstr(*url, "?")) ? "&": "?";
   *url = g_strconcat (*url, delimiter, query_param_name, "=", query_param_value, NULL);
   g_free (old_url);
+}
+
+static
+gboolean skippy_hls_is_32_bit_ios_build (void)
+{
+#if defined (__APPLE__) && defined (__MACH__)
+  return sizeof (void*) == 4;
+#else
+  return FALSE;
+#endif
 }
 
 G_GNUC_INTERNAL
