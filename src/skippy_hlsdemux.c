@@ -43,6 +43,9 @@
 
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
+#ifndef USE_SC_API_SPECIFICS
+#define USE_SC_API_SPECIFICS 1
+#endif
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
@@ -965,10 +968,11 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (!current_playlist) {
     return FALSE;
   }
-  
+#if USE_SC_API_SPECIFICS == 1
   if (demux->force_secure_hls && !skippy_hls_is_32_bit_ios_build ()) {
     skippy_hls_demux_append_query_param_to_hls_url (&current_playlist, "secure", "true");
   }
+#endif
 
   // Create a download
   download = skippy_fragment_new (current_playlist);
