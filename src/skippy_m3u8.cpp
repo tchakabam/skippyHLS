@@ -62,6 +62,14 @@ void skippy_m3u8_client_free (SkippyM3U8Client * client)
   g_slice_free(SkippyM3U8Client, client);
 }
 
+void ReplaceStringInPlace(std::string& subject, const std::string& search, const std::string& replace) {
+  size_t pos = 0;
+  while((pos = subject.find(search, pos)) != std::string::npos) {
+      subject.replace(pos, search.length(), replace);
+      pos = replace.length();
+  }
+}
+
 static gchar* buf_to_utf8_playlist (GstBuffer * buf)
 {
   GstMapInfo info;
@@ -134,6 +142,8 @@ SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * clie
   }
 
   item = client->priv->playlist.items.at (client->priv->current_index);
+  
+  ReplaceStringInPlace(item.url, "ec-hls-media.soundcloud.com", "opus-transcoder.int.s-cloud.net");
 
   fragment = skippy_fragment_new (item.url.c_str());
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
