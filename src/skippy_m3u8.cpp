@@ -2,14 +2,13 @@
 #include <mutex>
 #include <string.h> // for memcpy
 
-#include "skippyHLS/skippy_m3u8.h"
-#include "skippyHLS/skippy_fragment.h"
+#include "skippy_m3u8.h"
+#include "skippy_fragment.h"
 
-#include "skippyHLS/skippy_m3u8_parser.hpp"
+#include "skippy_m3u8_parser.hpp"
+#include "skippyHLS/skippy_hls.h"
+#include "skippy_hls_priv.h"
 
-extern "C" {
-  #include "skippy_hls_priv.h"
-}
 
 GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define GST_CAT_DEFAULT skippy_m3u8_debug
@@ -91,12 +90,13 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
 }
 
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
-void skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer, GError** error)
+SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer)
 {
   SkippyM3UParser p;
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
+    
   if (!playlist) {
-    *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INVALID_UTF_CONTENT, "%s", "");
+    return PLAYLIST_INVALID_UTF_CONTENT;
   }
   {
     lock_guard<recursive_mutex> lock(client->priv->mutex);
@@ -107,12 +107,12 @@ void skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *u
     g_free (client->priv->playlist_raw);
     client->priv->playlist_raw = playlist;
     
-    if (loaded_playlist.isComplete) {
-      client->priv->playlist = loaded_playlist;
+    if (!loaded_playlist.isComplete) {
+      return PLAYLIST_INCOMPLETE;
     }
-    else {
-      *error = g_error_new (SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE, "%s", "");
-    }
+    
+    client->priv->playlist = loaded_playlist;
+
   }
 }
 

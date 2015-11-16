@@ -13,7 +13,7 @@
 
 #include <glib-object.h>
 
-#include "skippyHLS/skippy_m3u8_parser.hpp"
+#include "skippy_m3u8_parser.hpp"
 
 #if ENABLE_DEBUG_LOG
   #define LOG(...) g_message(__VA_ARGS__)

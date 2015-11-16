@@ -25,11 +25,13 @@
 #include <gst/gst.h>
 
 #include "skippy_fragment.h"
+#include "skippy_hls_priv.h"
 
 // Add extern "C" when using C++ compiler
 G_BEGIN_DECLS
 
 struct SkippyM3U8ClientPrivate;
+
 typedef struct _SkippyM3U8Client
 {
   struct SkippyM3U8ClientPrivate* priv;
@@ -46,7 +48,7 @@ gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime tar
 gchar* skippy_m3u8_client_get_uri(SkippyM3U8Client * client);
 
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
-void skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer, GError** error);
+SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer);
 
 gchar *skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate);
 gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client);
