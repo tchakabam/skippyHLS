@@ -1222,6 +1222,11 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     demux->download_failed_count++;
     GST_DEBUG ("Failed to fetch fragment for %d times.", demux->download_failed_count);
     GST_OBJECT_UNLOCK (demux);
+    if (g_error_matches (err, GST_STREAM_ERROR, GST_STREAM_ERROR_WRONG_TYPE)) {
+      REPORT_FATAL_ERROR (demux, STREAM, WRONG_TYPE, ("%s", err->message), (NULL));
+      gst_task_pause (demux->stream_task);
+      goto end_stream_loop;
+    }
     // We only want to refetch the playlist if we get a 403 or a 404
     if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
       GST_OBJECT_LOCK (demux);
@@ -1274,6 +1279,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     GST_OBJECT_UNLOCK (demux);
   }
 
+end_stream_loop:
   // Unref current fragment
   if (fragment) {
     g_object_unref (fragment);
