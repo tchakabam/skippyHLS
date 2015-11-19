@@ -112,7 +112,7 @@ SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * clie
     }
     
     client->priv->playlist = loaded_playlist;
-
+    return NO_ERROR;
   }
 }
 
