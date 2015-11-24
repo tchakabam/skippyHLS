@@ -560,7 +560,11 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
       goto error;
       break;
     case NO_ERROR:
+      break;
     default:
+      g_warning ("Not expected return code. Please implement case branch for new return code");
+      GST_OBJECT_UNLOCK (demux);
+      goto error;
       break;
   }
 
