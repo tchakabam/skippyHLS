@@ -30,7 +30,8 @@
 #include <string.h>
 #include <math.h>
 
-#include "skippyHLS/skippy_hlsdemux.h"
+#include "skippy_hlsdemux.h"
+#include "skippyHLS/skippy_hls.h"
 #include "skippy_hls_priv.h"
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
@@ -526,8 +527,8 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 {
   gchar* uri = NULL;
   guint64 timestamp = (guint64) gst_util_get_timestamp ();
-  GError* error = NULL;
-
+  SkippyHlsInternalError result = NO_ERROR;
+  
   // Query the playlist URI
   uri = skippy_hls_demux_query_location (demux);
   if (!uri) {
@@ -541,21 +542,30 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   
   if (G_UNLIKELY(demux->playlist == NULL)) {
     GST_OBJECT_UNLOCK (demux);
-    REPORT_FATAL_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
+    GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
     goto error;
   }
   
-  skippy_m3u8_client_load_playlist (demux->client, uri, demux->playlist, &error);
+  result = skippy_m3u8_client_load_playlist (demux->client, uri, demux->playlist);
   
-  if (G_UNLIKELY(error)) {
-    GST_OBJECT_UNLOCK (demux);
-    if (g_error_matches(error, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
-      REPORT_FATAL_ERROR (demux, RESOURCE, READ,  ("First playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
-    }
-    else {
-      REPORT_FATAL_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
-    }
-    goto error;
+  switch (result) {
+    case PLAYLIST_INCOMPLETE:
+      GST_OBJECT_UNLOCK (demux);
+      GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_LOAD, ("First playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+      goto error;
+      break;
+    case PLAYLIST_INVALID_UTF_CONTENT:
+      GST_OBJECT_UNLOCK (demux);
+      GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INVALID_UTF_CONTENT, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
+      goto error;
+      break;
+    case NO_ERROR:
+      break;
+    default:
+      g_warning ("Not expected return code. Please implement case branch for new return code");
+      GST_OBJECT_UNLOCK (demux);
+      goto error;
+      break;
   }
 
   GST_OBJECT_UNLOCK (demux);
@@ -579,7 +589,6 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
 error:
   g_free (uri);
-  g_clear_error (&error);
   return;
 }
 
@@ -959,6 +968,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   SkippyUriDownloaderFetchReturn fetch_ret;
   gboolean ret = FALSE;
   gchar *current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
+  SkippyHlsInternalError load_playlist_result = NO_ERROR;
 
   if (!current_playlist) {
     return FALSE;
@@ -991,21 +1001,22 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     buf = skippy_uri_downloader_get_buffer (demux->playlist_downloader);
     
     g_clear_error (&err);
-    skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf, &err);
     
-    if (err) {
-      if (g_error_matches(err, SKIPPY_HLS_ERROR, SKIPPY_HLS_ERROR_PLAYLIST_INCOMPLETE)) {
-        REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+    load_playlist_result = skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf);
+      
+    if (G_UNLIKELY(load_playlist_result != NO_ERROR)) {
+      if (load_playlist_result == PLAYLIST_INCOMPLETE) {
+        GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_REFRESH, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
         demux->force_secure_hls = TRUE;
       }
       else {
-        REPORT_NON_FATAL_ERROR (demux, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
+        GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INVALID_UTF_CONTENT, ("While refreshing playlist: Invalid M3U8 data (buffer: %p)", buf), (NULL));
       }
       ret = FALSE;
-      break;
     }
-    
-    ret = TRUE;
+    else {
+      ret = TRUE;
+    }
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
@@ -1298,9 +1309,9 @@ void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* q
 }
 
 G_GNUC_INTERNAL
-void skippy_hlsdemux_setup (void)
+void skippy_hlsdemux_setup (guint hls_demux_rank)
 {
-  gst_element_register (NULL, "skippyhlsdemux", GST_RANK_PRIMARY + 100,
+  gst_element_register (NULL, "skippyhlsdemux", hls_demux_rank,
       TYPE_SKIPPY_HLS_DEMUX);
 }
 

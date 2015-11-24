@@ -27,8 +27,8 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "skippyHLS/skippy_fragment.h"
-#include "skippyHLS/skippy_uridownloader.h"
+#include "skippy_fragment.h"
+#include "skippy_uridownloader.h"
 
 #include <string.h>
 
