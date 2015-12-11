@@ -154,6 +154,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->srcpad = NULL;
   demux->sinkpad = gst_pad_new_from_static_template (&sinktemplate, "sink");
 
+  demux->out_adapter = gst_adapter_new();
+
   // Configure sink pad
   gst_pad_set_chain_function (demux->sinkpad, GST_DEBUG_FUNCPTR (skippy_hls_demux_sink_data));
   gst_pad_set_event_function (demux->sinkpad, GST_DEBUG_FUNCPTR (skippy_hls_demux_sink_event));
@@ -921,13 +923,17 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
     GST_BUFFER_PTS (buffer) = GST_CLOCK_TIME_NONE;
   }
+  gst_adapter_push(demux->out_adapter, buffer);
   GST_OBJECT_UNLOCK (demux);
 
   skippy_hls_demux_update_downstream_events (demux, TRUE, TRUE);
 
-  ret_value = gst_pad_chain (demux->queue_sinkpad, buffer);
-  if (ret_value < GST_FLOW_OK) {
+  int avail_out_size = 0;
+  while (avail_out_size = gst_adapter_available(demux->out_adapter)) {
+    ret_value = gst_pad_chain (demux->queue_sinkpad, gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size));
+    if (ret_value < GST_FLOW_OK) {
     GST_LOG ("Proxy pad was %s while invoking queue chain function", gst_flow_get_name (ret_value));
+    }
   }
   return ret_value;
 }

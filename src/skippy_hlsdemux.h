@@ -65,7 +65,8 @@ struct _SkippyHLSDemux
   // Internal
   GstPad *queue_sinkpad;
   GstPad * queue_proxy_pad;
-
+  GstAdapter * out_adapter;
+  
   /* Member objects */
   gboolean need_segment, need_stream_start;
   GstSegment segment;
