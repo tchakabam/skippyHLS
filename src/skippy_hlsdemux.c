@@ -338,7 +338,7 @@ skippy_hls_demux_stop (SkippyHLSDemux *demux)
   if (gst_task_get_state (demux->stream_task) != GST_TASK_PAUSED) {
     skippy_hls_demux_pause(demux);
   }
-  
+
   g_return_if_fail(gst_task_get_state (demux->stream_task) == GST_TASK_PAUSED);
 
   if (gst_task_get_state (demux->stream_task) != GST_TASK_STOPPED) {
@@ -530,7 +530,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   gchar* uri = NULL;
   guint64 timestamp = (guint64) gst_util_get_timestamp ();
   SkippyHlsInternalError result = NO_ERROR;
-  
+
   // Query the playlist URI
   uri = skippy_hls_demux_query_location (demux);
   if (!uri) {
@@ -541,15 +541,15 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
 
   // Parse main playlist - lock the object for this
   GST_OBJECT_LOCK (demux);
-  
+
   if (G_UNLIKELY(demux->playlist == NULL)) {
     GST_OBJECT_UNLOCK (demux);
     GST_ELEMENT_ERROR (demux, STREAM, DECODE, ("First playlist: Invalid M3U8 data (buffer=%p)", demux->playlist), (NULL));
     goto error;
   }
-  
+
   result = skippy_m3u8_client_load_playlist (demux->client, uri, demux->playlist);
-  
+
   switch (result) {
     case PLAYLIST_INCOMPLETE:
       GST_OBJECT_UNLOCK (demux);
@@ -908,10 +908,11 @@ skippy_hls_demux_is_caching_allowed (SkippyHLSDemux * demux)
 static GstFlowReturn
 skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer)
 {
-
   GST_TRACE ("Got %" GST_PTR_FORMAT, buffer);
 
-  GstFlowReturn ret_value;
+  GstFlowReturn ret_value = GST_FLOW_ERROR;
+  GstBuffer *buf;
+  gsize avail_out_size = 0;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
 
   GST_OBJECT_LOCK (demux);
@@ -923,16 +924,21 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
     GST_BUFFER_PTS (buffer) = GST_CLOCK_TIME_NONE;
   }
-  gst_adapter_push(demux->out_adapter, buffer);
   GST_OBJECT_UNLOCK (demux);
 
+  // first send eventual events upfront data
   skippy_hls_demux_update_downstream_events (demux, TRUE, TRUE);
 
-  int avail_out_size = 0;
-  while (avail_out_size = gst_adapter_available(demux->out_adapter)) {
-    ret_value = gst_pad_chain (demux->queue_sinkpad, gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size));
-    if (ret_value < GST_FLOW_OK) {
-    GST_LOG ("Proxy pad was %s while invoking queue chain function", gst_flow_get_name (ret_value));
+  // now push the data chunked
+  gst_adapter_push(demux->out_adapter, buffer);
+  while ((avail_out_size = gst_adapter_available(demux->out_adapter))) {
+    buf = gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size);
+    ret_value = gst_pad_chain (demux->queue_sinkpad, buf);
+    switch(ret_value) {
+    case GST_FLOW_OK:
+      GST_LOG ("Proxy pad was %s while invoking queue chain function", gst_flow_get_name (ret_value));
+    default:
+      break;
     }
   }
   return ret_value;
@@ -979,7 +985,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (!current_playlist) {
     return FALSE;
   }
-  
+
   if (demux->force_secure_hls) {
     skippy_hls_demux_append_query_param_to_hls_url (&current_playlist, "secure", "true");
   }
@@ -1005,11 +1011,11 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     skippy_hls_demux_post_stat_msg (demux, STAT_TIME_TO_PLAYLIST, download->download_stop_time - download->download_start_time, 0);
     // Load M3U8 buffer into parser
     buf = skippy_uri_downloader_get_buffer (demux->playlist_downloader);
-    
+
     g_clear_error (&err);
-    
+
     load_playlist_result = skippy_m3u8_client_load_playlist (demux->client, current_playlist, buf);
-      
+
     if (G_UNLIKELY(load_playlist_result != NO_ERROR)) {
       if (load_playlist_result == PLAYLIST_INCOMPLETE) {
         GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_REFRESH, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
@@ -1037,7 +1043,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (buf) {
     gst_buffer_unref (buf);
   }
-  
+
   g_clear_error (&err);
   g_free (current_playlist);
   return ret;
