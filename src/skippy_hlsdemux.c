@@ -916,12 +916,10 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
 
   GST_OBJECT_LOCK (demux);
+  GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
   if (demux->need_segment) {
-    GST_LOG ("Marking buffer at %" GST_TIME_FORMAT " as discontinuous",
-             GST_TIME_ARGS (demux->position));
     GST_BUFFER_PTS(buffer) = demux->position;
   } else {
-    GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
     GST_BUFFER_PTS (buffer) = GST_CLOCK_TIME_NONE;
   }
   GST_OBJECT_UNLOCK (demux);
