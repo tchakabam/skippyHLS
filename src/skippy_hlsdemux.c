@@ -60,7 +60,7 @@ GST_DEBUG_CATEGORY_STATIC (skippy_hls_demux_debug);
 #define SKIPPY_HLS_DOWNLOAD_AHEAD "skippy-download-ahead"
 
 //NOTE: if an error is considered recoverable from category will be STREAM, code DEMUX.
-#define REPORT_NON_FATAL_ERROR(el, text, debug) GST_ELEMENT_ERROR(el, STREAM, DEMUX, text, debug)
+#define REPORT_NON_FATAL_ERROR(el, text, debug) GST_ELEMENT_WARNING(el, STREAM, DEMUX, text, debug)
 #define REPORT_FATAL_ERROR(el, domain, code, text, debug)  \
 G_STMT_START {                                             \
   if (G_UNLIKELY(GST_ ## domain ## _ERROR == GST_STREAM_ERROR && GST_ ## domain ## _ERROR_ ## code == GST_STREAM_ERROR_DEMUX)) {     \
@@ -553,7 +553,7 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   switch (result) {
     case PLAYLIST_INCOMPLETE:
       GST_OBJECT_UNLOCK (demux);
-      GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_LOAD, ("First playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+      GST_ELEMENT_WARNING (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_LOAD, ("First playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
       goto error;
       break;
     case PLAYLIST_INVALID_UTF_CONTENT:
@@ -725,11 +725,11 @@ skippy_hls_demux_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
   demux = SKIPPY_HLS_DEMUX (parent);
 
-  GST_DEBUG_OBJECT (pad, "Got %" GST_PTR_FORMAT, event);
+  GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
 
   switch (event->type) {
   case GST_EVENT_EOS:
-    GST_DEBUG_OBJECT (demux, "Got EOS on the sink pad: main playlist fetched");
+    GST_DEBUG ("Got EOS on the sink pad: main playlist fetched");
     // Stream loop should not be running when this is called
     skippy_hls_demux_handle_first_playlist (demux);
     break;
@@ -1022,7 +1022,7 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
 
     if (G_UNLIKELY(load_playlist_result != NO_ERROR)) {
       if (load_playlist_result == PLAYLIST_INCOMPLETE) {
-        GST_ELEMENT_ERROR (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_REFRESH, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
+        GST_ELEMENT_WARNING (demux, SKIPPY_HLS, PLAYLIST_INCOMPLETE_ON_REFRESH, ("While refreshing playlist: Incomplete M3U8 data."), ("%s", skippy_m3u8_client_get_current_raw_data (demux->client)));
         demux->force_secure_hls = TRUE;
       }
       else {
