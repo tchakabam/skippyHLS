@@ -921,9 +921,6 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   }
   if (G_UNLIKELY(demux->need_segment)) {
     GST_BUFFER_PTS(buffer) = demux->position;
-    if (!demux->need_stream_start) {
-      GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);
-    }
   } else {
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
     GST_BUFFER_PTS (buffer) = GST_CLOCK_TIME_NONE;
