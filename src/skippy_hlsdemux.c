@@ -920,6 +920,12 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
   }
   if (G_UNLIKELY(demux->need_segment)) {
+    // To fix zero-position issue uncomment this.
+    // However this is causing choppiness in playback right after seeking sometimes.
+    // We probably have to do the flagging *after* the chunking in the adapter.
+    //if (!demux->need_stream_start) {		
+    //    GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);		
+    //}      
     GST_BUFFER_PTS(buffer) = demux->position;
   } else {
     GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
