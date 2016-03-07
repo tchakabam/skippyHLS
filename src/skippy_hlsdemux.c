@@ -911,25 +911,20 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   GST_TRACE ("Got %" GST_PTR_FORMAT, buffer);
 
   GstFlowReturn ret_value = GST_FLOW_ERROR;
+  gboolean set_discont = FALSE, first_buffer_processed = FALSE;
+  GstClockTime buffer_pts = GST_CLOCK_TIME_NONE;
   GstBuffer *buf;
   gsize avail_out_size = 0;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
 
   GST_OBJECT_LOCK (demux);
-  if (G_UNLIKELY(demux->need_stream_start)) {
-    GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
-  }
   if (G_UNLIKELY(demux->need_segment)) {
-    // To fix zero-position issue uncomment this.
-    // However this is causing choppiness in playback right after seeking sometimes.
-    // We probably have to do the flagging *after* the chunking in the adapter.
-    //if (!demux->need_stream_start) {		
-    //    GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);		
-    //}      
-    GST_BUFFER_PTS(buffer) = demux->position;
+    buffer_pts = demux->position;
+    if (!demux->need_stream_start) {
+      set_discont = TRUE;
+    }
   } else {
-    GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
-    GST_BUFFER_PTS (buffer) = GST_CLOCK_TIME_NONE;
+    set_discont = FALSE;
   }
   GST_OBJECT_UNLOCK (demux);
 
@@ -938,8 +933,25 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
 
   // now push the data chunked
   gst_adapter_push(demux->out_adapter, buffer);
+  
   while ((avail_out_size = gst_adapter_available(demux->out_adapter))) {
     buf = gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size);
+    if (G_UNLIKELY(!first_buffer_processed)) {
+      first_buffer_processed = TRUE;
+      // set proper discont flag and time stamp if needed for the first buffer
+      if (set_discont) {
+        GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
+      } else {
+        GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
+      }
+      // set pts for buf
+      GST_BUFFER_PTS(buf) = buffer_pts;
+    } else {
+      // for all subsequent buffers unset discont flag and mark PTS
+      // as GST_CLOCK_TIME_NONE (continous data)
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
+      GST_BUFFER_PTS(buf) =  GST_CLOCK_TIME_NONE;
+    }
     ret_value = gst_pad_chain (demux->queue_sinkpad, buf);
     switch(ret_value) {
     case GST_FLOW_OK:
