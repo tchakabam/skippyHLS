@@ -936,7 +936,6 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   
   while ((avail_out_size = gst_adapter_available(demux->out_adapter))) {
     buf = gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size);
-    g_warn_if_fail (buf != NULL);
     if (G_UNLIKELY(!first_buffer_processed)) {
       first_buffer_processed = TRUE;
       // set proper discont flag and time stamp if needed for the first buffer
