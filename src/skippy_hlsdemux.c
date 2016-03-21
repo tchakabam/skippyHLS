@@ -908,6 +908,8 @@ skippy_hls_demux_is_caching_allowed (SkippyHLSDemux * demux)
 static GstFlowReturn
 skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buffer)
 {
+  static const int16_t chunkSize = 1024 * 8;
+
   GST_TRACE ("Got %" GST_PTR_FORMAT, buffer);
 
   GstFlowReturn ret_value = GST_FLOW_ERROR;
@@ -935,7 +937,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   gst_adapter_push(demux->out_adapter, buffer);
   
   while ((avail_out_size = gst_adapter_available(demux->out_adapter))) {
-    buf = gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size);
+    buf = gst_adapter_take_buffer(demux->out_adapter, avail_out_size > chunkSize ? chunkSize : avail_out_size);
     if (G_UNLIKELY(!first_buffer_processed)) {
       first_buffer_processed = TRUE;
       // set proper discont flag and time stamp if needed for the first buffer
