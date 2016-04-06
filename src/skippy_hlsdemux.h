@@ -100,8 +100,5 @@ struct _SkippyHLSDemuxClass
 G_GNUC_INTERNAL
 GType skippy_hls_demux_get_type (void);
 
-G_GNUC_INTERNAL
-void skippy_hlsdemux_setup (guint hls_demux_rank);
-
 G_END_DECLS
 #endif /* __GST_HLS_DEMUX_H__ */
