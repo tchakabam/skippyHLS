@@ -1339,14 +1339,13 @@ void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* q
   g_free (old_url);
 }
 
-G_GNUC_INTERNAL
+
 void skippy_hlsdemux_setup (guint hls_demux_rank)
 {
   gst_element_register (NULL, "skippyhlsdemux", hls_demux_rank,
       TYPE_SKIPPY_HLS_DEMUX);
 }
 
-G_GNUC_INTERNAL
 GQuark skippy_hls_error_quark(void) {
   static GQuark skippy_hls_quark;
   if (!skippy_hls_quark) {
