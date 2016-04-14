@@ -49,6 +49,12 @@ typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
 // Constants for custom element message names
 #define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
 
+typedef enum {
+  UNKNOWN,
+  MP3,
+  OPUS
+} SkippyHLSDemuxCodec;
+
 /**
  * SkippyHLSDemux:
  *
@@ -77,6 +83,7 @@ struct _SkippyHLSDemux
   SkippyUriDownloader *playlist_downloader;
   SkippyM3U8Client *client;     /* M3U8 client */
 
+
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
@@ -90,6 +97,12 @@ struct _SkippyHLSDemux
   gint download_forbidden_count;
   gboolean continuing;
   gboolean force_secure_hls;
+  
+  /* Codec specific state */
+  SkippyHLSDemuxCodec dataCodec;
+  gchar* opus_init_data;
+  guint16 opus_init_data_written;
+  gboolean opus_0_fragment_cached;
 };
 
 struct _SkippyHLSDemuxClass

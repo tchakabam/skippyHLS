@@ -122,19 +122,39 @@ gchar* skippy_m3u8_client_get_current_raw_data (SkippyM3U8Client * client) {
 }
 
 // Called to get the next fragment
-SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * client)
+SkippyFragment* skippy_m3u8_client_get_fragment (SkippyM3U8Client * client, guint64 sequence_number)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
   SkippyFragment *fragment;
   SkippyM3UItem item;
 
-  if (client->priv->current_index >= client->priv->playlist.items.size()) {
+  if (sequence_number >= client->priv->playlist.items.size()) {
     return NULL;
   }
 
-  item = client->priv->playlist.items.at (client->priv->current_index);
+  item = client->priv->playlist.items.at (sequence_number);
 
+  fragment = skippy_fragment_new (item.url.c_str());
+  fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
+  fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
+  fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
+  return fragment;
+}
+
+SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * client)
+{
+  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  
+  SkippyFragment *fragment;
+  SkippyM3UItem item;
+  
+  if (client->priv->current_index >= client->priv->playlist.items.size()) {
+    return NULL;
+  }
+  
+  item = client->priv->playlist.items.at (client->priv->current_index);
+  
   fragment = skippy_fragment_new (item.url.c_str());
   fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
   fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
