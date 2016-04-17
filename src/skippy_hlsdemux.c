@@ -29,10 +29,12 @@
 
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
 
 #include "skippy_hlsdemux.h"
 #include "skippyHLS/skippy_hls.h"
 #include "skippy_hls_priv.h"
+#include "glib.h"
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
 #define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
@@ -44,6 +46,10 @@
 
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
+
+#define OPUS_FORMAT_PARAM "hls_opus_64_uri"
+#define MP3_FORMAT_PARAM "hls_mp3"
+#define FORMAT_PARAM "format"
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
@@ -107,6 +113,8 @@ static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent
 
 /* Utility functions */
 static void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* query_param_name, const gchar* query_param_value);
+static void http_replace_query_parameter(gchar **url, const gchar* query_param_name, const gchar* query_param_value);
+
 
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
@@ -1044,7 +1052,12 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (demux->force_secure_hls) {
     skippy_hls_demux_append_query_param_to_hls_url (&current_playlist, "secure", "true");
   }
-
+  
+  if (demux->caps) {
+    const char* format = demux->dataCodec == OPUS ? OPUS_FORMAT_PARAM : MP3_FORMAT_PARAM;
+    http_replace_query_parameter (&current_playlist, FORMAT_PARAM, format);
+  }
+  
   // Create a download
   download = skippy_fragment_new (current_playlist);
   download->start_time = 0;
@@ -1086,6 +1099,14 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     }
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
+      if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
+        GST_WARNING ("Got 403 while refreshing playlist. Specified media format is not available anymore");
+        GST_ELEMENT_WARNING (demux, SKIPPY_HLS, UNSUPPORTED_MEDIA_FORMAT, ("Media format not supported."), (NULL));
+        gst_task_pause (demux->stream_task);
+      }
+      ret = FALSE;
+      break;
+      
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
   case SKIPPY_URI_DOWNLOADER_VOID:
     if (err) {
@@ -1263,7 +1284,9 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   // Get next fragment from M3U8 list
   referrer_uri = skippy_m3u8_client_get_uri (demux->client);
   
+  
   fragment = skippy_m3u8_client_get_current_fragment (demux->client);
+  
   if (demux->dataCodec == OPUS) {
     current_opus_fragment = skippy_m3u8_client_get_current_fragment (demux->client);
     // when we seek we first want to make sure that 0 segment is pushed
@@ -1425,6 +1448,53 @@ void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* q
   const gchar* delimiter = (g_strrstr(*url, "?")) ? "&": "?";
   *url = g_strconcat (*url, delimiter, query_param_name, "=", query_param_value, NULL);
   g_free (old_url);
+}
+
+static void http_replace_query_parameter(gchar **url, const gchar* query_param_name, const gchar* query_param_value)
+{
+  gchar **uri_parts = g_strsplit (*url, "?",2);
+  gchar **parameters = NULL;
+  gchar **index = uri_parts;
+  GList *params_list = NULL, *iterator = NULL;
+  gboolean param_processed = FALSE;
+  gchar *new_param = g_strconcat(query_param_name, "=", query_param_value, NULL);
+  int i = 0;
+  for (; *index != NULL; index++, i++) {
+    if (i == 1) {
+      parameters = g_strsplit (*index, "&", 0);
+      gchar **param_index = parameters;
+      for (; *param_index != NULL; param_index++) {
+        if (g_str_has_prefix (*param_index, query_param_name) &&
+            (*param_index)[strlen(query_param_name)] == '=') {
+          if (!param_processed) {
+            params_list = g_slist_prepend (params_list, new_param);
+            param_processed = TRUE;
+          }
+        } else {
+          params_list = g_slist_prepend (params_list, *param_index);
+        }
+      }
+    }
+  }
+  if (!param_processed) {
+    params_list = g_slist_prepend (params_list, new_param);
+  }
+  gchar* old_url = *url;
+  *url = g_strconcat (*uri_parts, "?", NULL);
+  g_free (old_url);
+  for (iterator = params_list; iterator; iterator = iterator->next) {
+    old_url = *url;
+    if (iterator == params_list) {
+      *url = g_strconcat (*url, iterator->data, NULL);
+    } else {
+      *url = g_strconcat (*url, "&", iterator->data, NULL);
+    }
+    g_free (old_url);
+  }
+  g_slist_free (params_list);
+  g_strfreev (parameters);
+  g_strfreev (uri_parts);
+  g_free (new_param);
 }
 
 
