@@ -50,7 +50,7 @@ typedef struct _SkippyHLSDemuxClass SkippyHLSDemuxClass;
 #define SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME "adaptive-streaming-statistics"
 
 typedef enum {
-  UNKNOWN,
+  UNKNOWN = 0,
   MP3,
   OPUS
 } SkippyHLSDemuxCodec;

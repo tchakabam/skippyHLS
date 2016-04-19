@@ -47,9 +47,10 @@
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
 
-#define OPUS_FORMAT_PARAM "hls_opus_64_uri"
-#define MP3_FORMAT_PARAM "hls_mp3"
+#define OPUS_FORMAT_PARAM "hls_opus_64_url"
+#define MP3_FORMAT_PARAM "hls_mp3_128_url"
 #define FORMAT_PARAM "format"
+#define FORMAT_OPUS_PARAM "format=hls_opus_64_url"
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
@@ -84,6 +85,7 @@ typedef enum
   STAT_TIME_OF_FIRST_PLAYLIST,
   STAT_TIME_TO_PLAYLIST,
   STAT_TIME_TO_DOWNLOAD_FRAGMENT,
+  STAT_CODEC_TYPE
 } SkippyHLSDemuxStats;
 
 /* GObject */
@@ -450,6 +452,12 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
       "manifest-download-stop", GST_TYPE_CLOCK_TIME, time_val,
       NULL);
     break;
+    case STAT_CODEC_TYPE:
+      GST_TRACE ("Statistic: STAT_CODEC_TYPE");
+      structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
+      "codec-type", G_TYPE_UINT, size,
+      NULL);
+      break;
   default:
     GST_ERROR ("Can't post unknown stats type");
     return;
@@ -627,6 +635,9 @@ void skippy_hls_demux_update_downstream_events (SkippyHLSDemux *demux, gboolean 
     demux->need_stream_start = FALSE;
     GST_DEBUG ("Sending %" GST_PTR_FORMAT, event);
     gst_pad_send_event (demux->queue_sinkpad, event);
+    if (demux->caps) {
+      skippy_hls_demux_post_stat_msg (demux, STAT_CODEC_TYPE, 0, demux->dataCodec);
+    }
   }
 
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
@@ -1099,10 +1110,13 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     }
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
-      if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
-        GST_WARNING ("Got 403 while refreshing playlist. Specified media format is not available anymore");
-        GST_ELEMENT_WARNING (demux, SKIPPY_HLS, UNSUPPORTED_MEDIA_FORMAT, ("Media format not supported."), (NULL));
-        gst_task_pause (demux->stream_task);
+      if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND)) {
+        // playlist not found - if we have opus set as parm - threat this as recovery needed - try with mp3
+        if (strstr(current_playlist, FORMAT_OPUS_PARAM)) {
+          GST_WARNING ("Got 403 while refreshing playlist. Specified media format is not available anymore");
+          GST_ELEMENT_WARNING (demux, SKIPPY_HLS, UNSUPPORTED_MEDIA_FORMAT, ("Media format not supported."), (NULL));
+          gst_task_pause (demux->stream_task);
+        }
       }
       ret = FALSE;
       break;
@@ -1455,7 +1469,7 @@ static void http_replace_query_parameter(gchar **url, const gchar* query_param_n
   gchar **uri_parts = g_strsplit (*url, "?",2);
   gchar **parameters = NULL;
   gchar **index = uri_parts;
-  GList *params_list = NULL, *iterator = NULL;
+  GSList *params_list = NULL, *iterator = NULL;
   gboolean param_processed = FALSE;
   gchar *new_param = g_strconcat(query_param_name, "=", query_param_value, NULL);
   int i = 0;
