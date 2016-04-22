@@ -26,6 +26,7 @@
 
 #include <gst/gst.h>
 #include <gst/base/gstadapter.h>
+#include "oggDemux.h"
 
 #include "skippy_m3u8.h"
 #include "skippy_uridownloader.h"
@@ -84,6 +85,8 @@ struct _SkippyHLSDemux
   SkippyM3U8Client *client;     /* M3U8 client */
 
 
+  COggDecoder oggDemux;
+  
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
