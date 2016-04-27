@@ -255,6 +255,7 @@ skippy_hls_demux_dispose (GObject * obj)
   
   if (demux->opus_init_data) {
     g_free (demux->opus_init_data);
+    demux->opus_init_data = NULL;
   }
 
   GST_DEBUG ("Done cleaning up.");
@@ -965,6 +966,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
         size_t number_of_bytes_to_write = (129 - demux->opus_init_data_written > in_map.size) ? in_map.size : 129 - demux->opus_init_data_written;
         memcpy (demux->opus_init_data + demux->opus_init_data_written, in_map.data, number_of_bytes_to_write);
         demux->opus_init_data_written += number_of_bytes_to_write;
+        gst_buffer_unmap (buffer, &in_map);
       }
     }
   }
