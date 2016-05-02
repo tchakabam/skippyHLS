@@ -42,6 +42,7 @@ void skippy_m3u8_client_free (SkippyM3U8Client * client);
 
 // Called to get the next fragment
 SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * client);
+SkippyFragment* skippy_m3u8_client_get_fragment (SkippyM3U8Client * client, guint64 sequence_number);
 void skippy_m3u8_client_advance_to_next_fragment (SkippyM3U8Client * client);
 gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime target);
 

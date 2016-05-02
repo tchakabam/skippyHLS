@@ -29,10 +29,12 @@
 
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
 
 #include "skippy_hlsdemux.h"
 #include "skippyHLS/skippy_hls.h"
 #include "skippy_hls_priv.h"
+#include "glib.h"
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
 #define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
@@ -44,6 +46,11 @@
 
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
+
+#define OPUS_FORMAT_PARAM "hls_opus_64_url"
+#define MP3_FORMAT_PARAM "hls_mp3_128_url"
+#define FORMAT_PARAM "format"
+#define FORMAT_OPUS_PARAM "format=hls_opus_64_url"
 
 static GstStaticPadTemplate srctemplate = GST_STATIC_PAD_TEMPLATE ("src_%u",
     GST_PAD_SRC,
@@ -78,6 +85,7 @@ typedef enum
   STAT_TIME_OF_FIRST_PLAYLIST,
   STAT_TIME_TO_PLAYLIST,
   STAT_TIME_TO_DOWNLOAD_FRAGMENT,
+  STAT_CODEC_TYPE
 } SkippyHLSDemuxStats;
 
 /* GObject */
@@ -107,6 +115,8 @@ static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent
 
 /* Utility functions */
 static void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* query_param_name, const gchar* query_param_value);
+static void http_replace_query_parameter(gchar **url, const gchar* query_param_name, const gchar* query_param_value);
+
 
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
@@ -188,6 +198,11 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
 
   demux->download_ahead = DEFAULT_BUFFER_DURATION;
   demux->force_secure_hls = FALSE;
+  
+  demux->dataCodec = UNKNOWN;
+  demux->opus_init_data = g_malloc (129);
+  demux->opus_init_data_written = 0;
+  demux->opus_0_fragment_cached = FALSE;
 
   // Thread
   g_cond_init (&demux->wait_cond);
@@ -236,6 +251,11 @@ skippy_hls_demux_dispose (GObject * obj)
   if (demux->caps) {
     gst_caps_unref (demux->caps);
     demux->caps = NULL;
+  }
+  
+  if (demux->opus_init_data) {
+    g_free (demux->opus_init_data);
+    demux->opus_init_data = NULL;
   }
 
   GST_DEBUG ("Done cleaning up.");
@@ -433,6 +453,12 @@ skippy_hls_demux_post_stat_msg (SkippyHLSDemux * demux, SkippyHLSDemuxStats metr
       "manifest-download-stop", GST_TYPE_CLOCK_TIME, time_val,
       NULL);
     break;
+    case STAT_CODEC_TYPE:
+      GST_TRACE ("Statistic: STAT_CODEC_TYPE");
+      structure = gst_structure_new (SKIPPY_HLS_DEMUX_STATISTIC_MSG_NAME,
+      "codec-type", G_TYPE_UINT, size,
+      NULL);
+      break;
   default:
     GST_ERROR ("Can't post unknown stats type");
     return;
@@ -610,6 +636,9 @@ void skippy_hls_demux_update_downstream_events (SkippyHLSDemux *demux, gboolean 
     demux->need_stream_start = FALSE;
     GST_DEBUG ("Sending %" GST_PTR_FORMAT, event);
     gst_pad_send_event (demux->queue_sinkpad, event);
+    if (demux->caps) {
+      skippy_hls_demux_post_stat_msg (demux, STAT_CODEC_TYPE, 0, demux->dataCodec);
+    }
   }
 
   // This is TRUE if we have modified the segment or if its the very first buffer we issue
@@ -805,6 +834,8 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   gst_segment_do_seek (&demux->segment, rate, format, flags, start_type, start, stop_type, stop, NULL);
 
   demux->need_segment = TRUE;
+  
+  //demux->opus_init_data_written = 0;
 
   // Restart the streaming task
   GST_DEBUG ("Restarting streaming task");
@@ -926,6 +957,19 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   } else {
     set_discont = FALSE;
   }
+  // check opus init
+  if (demux->dataCodec == OPUS) {
+    if (!(demux->opus_0_fragment_cached = (demux->opus_init_data_written >= 129))) {
+      if (buffer != NULL) {
+        GstMapInfo in_map;
+        gst_buffer_map(buffer, &in_map, GST_MAP_READ);
+        size_t number_of_bytes_to_write = (129 - demux->opus_init_data_written > in_map.size) ? in_map.size : 129 - demux->opus_init_data_written;
+        memcpy (demux->opus_init_data + demux->opus_init_data_written, in_map.data, number_of_bytes_to_write);
+        demux->opus_init_data_written += number_of_bytes_to_write;
+        gst_buffer_unmap (buffer, &in_map);
+      }
+    }
+  }
   GST_OBJECT_UNLOCK (demux);
 
   // first send eventual events upfront data
@@ -940,7 +984,13 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
       first_buffer_processed = TRUE;
       // set proper discont flag and time stamp if needed for the first buffer
       if (set_discont) {
-        GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
+        GstBuffer *fake_buffer = gst_buffer_new();
+        GST_BUFFER_FLAG_SET (fake_buffer, GST_BUFFER_FLAG_DISCONT);
+        GST_BUFFER_PTS(fake_buffer) = buffer_pts;
+        gst_pad_chain (demux->queue_sinkpad, fake_buffer);
+        
+        //GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
+        GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
       } else {
         GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
       }
@@ -966,10 +1016,11 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
 static gboolean
 skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *event)
 {
-  GST_TRACE ("Got %" GST_PTR_FORMAT, event);
+  GST_DEBUG ("Got %" GST_PTR_FORMAT, event);
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
   GstCaps *caps;
+  static GstStaticCaps opus_caps = GST_STATIC_CAPS ("audio/ogg");
   switch (event->type) {
   case GST_EVENT_CAPS:
     GST_OBJECT_LOCK (demux);
@@ -978,6 +1029,12 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
     }
     gst_event_parse_caps (event, &caps);
     demux->caps = gst_caps_copy (caps);
+    
+    if (gst_caps_can_intersect (gst_static_caps_get (&opus_caps), demux->caps)) {
+      demux->dataCodec = OPUS;
+    } else {
+      demux->dataCodec = MP3;
+    }
     GST_OBJECT_UNLOCK (demux);
   default:
     break;
@@ -1008,7 +1065,12 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
   if (demux->force_secure_hls) {
     skippy_hls_demux_append_query_param_to_hls_url (&current_playlist, "secure", "true");
   }
-
+  
+  if (demux->caps) {
+    const char* format = demux->dataCodec == OPUS ? OPUS_FORMAT_PARAM : MP3_FORMAT_PARAM;
+    http_replace_query_parameter (&current_playlist, FORMAT_PARAM, format);
+  }
+  
   // Create a download
   download = skippy_fragment_new (current_playlist);
   download->start_time = 0;
@@ -1050,6 +1112,17 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
     }
     break;
   case SKIPPY_URI_DOWNLOADER_FAILED:
+      if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND)) {
+        // playlist not found - if we have opus set as parm - threat this as recovery needed - try with mp3
+        if (strstr(current_playlist, FORMAT_OPUS_PARAM)) {
+          GST_WARNING ("Got 403 while refreshing playlist. Specified media format is not available anymore");
+          GST_ELEMENT_WARNING (demux, SKIPPY_HLS, UNSUPPORTED_MEDIA_FORMAT, ("Media format not supported."), (NULL));
+          gst_task_pause (demux->stream_task);
+        }
+      }
+      ret = FALSE;
+      break;
+      
   case SKIPPY_URI_DOWNLOADER_CANCELLED:
   case SKIPPY_URI_DOWNLOADER_VOID:
     if (err) {
@@ -1183,6 +1256,20 @@ skippy_hlsdemux_proxy_pad_reset (SkippyHLSDemux *demux)
   GST_OBJECT_FLAG_UNSET (demux->queue_proxy_pad, GST_PAD_FLAG_EOS);
 }
 
+
+static void
+skippy_hlsdemux_opus_push_0_segment (SkippyHLSDemux *demux, gboolean is_discont) {
+  GstMapInfo info_map;
+  GstBuffer* opus_head_buffer = gst_buffer_new_and_alloc (129);
+  gst_buffer_map (opus_head_buffer, &info_map, GST_MAP_READWRITE);
+  memcpy (info_map.data, demux->opus_init_data, 129);
+  info_map.size = 129;
+  gst_buffer_unmap (opus_head_buffer, &info_map);
+  GST_BUFFER_FLAG_SET (opus_head_buffer, GST_BUFFER_FLAG_DISCONT);
+  GST_BUFFER_PTS (opus_head_buffer) = demux->position;
+  skippy_hls_demux_proxy_pad_chain(demux->queue_proxy_pad, NULL, opus_head_buffer);
+}
+
 // Streaming task function - implements all the HLS logic.
 // When this runs the streaming task mutex is/must be locked.
 //
@@ -1190,11 +1277,12 @@ skippy_hlsdemux_proxy_pad_reset (SkippyHLSDemux *demux)
 static void
 skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 {
-  SkippyFragment *fragment = NULL;
+  SkippyFragment *fragment = NULL, *current_opus_fragment = NULL;
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
   gchar* referrer_uri = NULL;
   gboolean playlist_refresh = FALSE;
+  gboolean opus_need_head  = FALSE;
   GstClockTime time_until_retry;
 
   GST_TRACE_OBJECT (demux, "Entering stream task");
@@ -1211,13 +1299,46 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
 
   // Get next fragment from M3U8 list
   referrer_uri = skippy_m3u8_client_get_uri (demux->client);
+  
+  
   fragment = skippy_m3u8_client_get_current_fragment (demux->client);
-
+  
+  if (demux->dataCodec == OPUS) {
+    current_opus_fragment = skippy_m3u8_client_get_current_fragment (demux->client);
+    // when we seek we first want to make sure that 0 segment is pushed
+    if (demux->need_segment && !demux->need_stream_start) {
+      if (demux->opus_0_fragment_cached) {
+        // if 0 segment is already buffered push it directly
+        demux->position = current_opus_fragment->start_time;
+        skippy_hlsdemux_opus_push_0_segment(demux, TRUE);
+      } else {
+        // we are seeking but 0 segment is not buffered, so stream loop should
+        // fetch it
+        demux->opus_init_data_written = 0;
+        opus_need_head = TRUE;
+        fragment = skippy_m3u8_client_get_fragment (demux->client, 0);
+      }
+    } else {
+      // not seeking but we did not cache the whole 0 segment
+      // this may happen if download was canceled etc..
+      if (demux->opus_init_data_written != 129) {
+        // in this case stream loop should fetch 0 segment
+        demux->opus_init_data_written = 0;
+        opus_need_head = TRUE;
+        fragment = skippy_m3u8_client_get_fragment (demux->client, 0);
+      }
+    }
+  }
+  
   if (fragment) {
-
     GST_OBJECT_LOCK (demux);
-    demux->position = fragment->start_time;
+    if (opus_need_head) {
+      demux->position = current_opus_fragment->start_time;
+    } else {
+      demux->position = fragment->start_time;
+    }
     GST_OBJECT_UNLOCK (demux);
+    
 
     GST_INFO_OBJECT (demux, "Pushing data for next fragment: %s (Byte-Range=%" G_GINT64_FORMAT " - %" G_GINT64_FORMAT ")",
       fragment->uri, fragment->range_start, fragment->range_end);
@@ -1296,13 +1417,16 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       fragment->download_stop_time - fragment->download_start_time, fragment->size);
     // Reset failure counter, position and scheduling condition
     GST_OBJECT_LOCK (demux);
-    demux->position_downloaded = fragment->stop_time;
-    demux->download_failed_count = 0;
-    demux->download_forbidden_count = 0;
-    demux->continuing = FALSE;
+    if (!opus_need_head) {
+      demux->position_downloaded = fragment->stop_time;
+      demux->download_failed_count = 0;
+      demux->download_forbidden_count = 0;
+      demux->continuing = FALSE;
+      // Go to next fragment
+      skippy_m3u8_client_advance_to_next_fragment (demux->client);
+    }
+    opus_need_head = FALSE;
     GST_OBJECT_UNLOCK (demux);
-    // Go to next fragment
-    skippy_m3u8_client_advance_to_next_fragment (demux->client);
     break;
   }
 
@@ -1326,6 +1450,9 @@ end_stream_loop:
   if (fragment) {
     g_object_unref (fragment);
   }
+  if (current_opus_fragment) {
+    g_object_unref (current_opus_fragment);
+  }
   g_free (referrer_uri);
   g_clear_error (&err);
 }
@@ -1337,6 +1464,53 @@ void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* q
   const gchar* delimiter = (g_strrstr(*url, "?")) ? "&": "?";
   *url = g_strconcat (*url, delimiter, query_param_name, "=", query_param_value, NULL);
   g_free (old_url);
+}
+
+static void http_replace_query_parameter(gchar **url, const gchar* query_param_name, const gchar* query_param_value)
+{
+  gchar **uri_parts = g_strsplit (*url, "?",2);
+  gchar **parameters = NULL;
+  gchar **index = uri_parts;
+  GSList *params_list = NULL, *iterator = NULL;
+  gboolean param_processed = FALSE;
+  gchar *new_param = g_strconcat(query_param_name, "=", query_param_value, NULL);
+  int i = 0;
+  for (; *index != NULL; index++, i++) {
+    if (i == 1) {
+      parameters = g_strsplit (*index, "&", 0);
+      gchar **param_index = parameters;
+      for (; *param_index != NULL; param_index++) {
+        if (g_str_has_prefix (*param_index, query_param_name) &&
+            (*param_index)[strlen(query_param_name)] == '=') {
+          if (!param_processed) {
+            params_list = g_slist_prepend (params_list, new_param);
+            param_processed = TRUE;
+          }
+        } else {
+          params_list = g_slist_prepend (params_list, *param_index);
+        }
+      }
+    }
+  }
+  if (!param_processed) {
+    params_list = g_slist_prepend (params_list, new_param);
+  }
+  gchar* old_url = *url;
+  *url = g_strconcat (*uri_parts, "?", NULL);
+  g_free (old_url);
+  for (iterator = params_list; iterator; iterator = iterator->next) {
+    old_url = *url;
+    if (iterator == params_list) {
+      *url = g_strconcat (*url, iterator->data, NULL);
+    } else {
+      *url = g_strconcat (*url, "&", iterator->data, NULL);
+    }
+    g_free (old_url);
+  }
+  g_slist_free (params_list);
+  g_strfreev (parameters);
+  g_strfreev (uri_parts);
+  g_free (new_param);
 }
 
 
