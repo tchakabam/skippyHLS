@@ -5,34 +5,35 @@
 #ifndef OGGOPUSDEC_OGGOPUSDEC_H_H
 #define OGGOPUSDEC_OGGOPUSDEC_H_H
 
+#include <stdint.h>
+#include <stddef.h>
+
+typedef struct {
+    unsigned char*  payload;
+    int64_t         granulepos;
+    size_t          len;
+} OpusPacket;
+
 #ifdef  __cplusplus
 #include <istream>
 #include <vector>
 #include <memory>
-#include <cstdint>
 
 class OggDecoder
 {
+    struct Impl; std::unique_ptr<Impl> m_priv;
 public:
-    struct Impl;
     OggDecoder();
     ~OggDecoder();
     void read(std::istream& stream);
+    bool tryParseFullPage();
+    bool tryReadPacket(OpusPacket* outPkt);
     void setLastSeekingPosition(int64_t lastSeekingPoistion);
     void flush();
-    std::shared_ptr<Impl> priv() { return m_priv; } // ouch
-private:
-    std::vector<float> decoded;
-    std::shared_ptr<Impl> m_priv;
 };
 #endif
 
 typedef void* COggDecoder;
-typedef struct {
-    unsigned char* payload;
-    int64_t granulepos;
-    size_t len;
-} OpusPacket;
 
 #ifdef  __cplusplus
 extern "C" {

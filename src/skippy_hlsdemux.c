@@ -951,7 +951,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
 {
   GST_TRACE ("Got %" GST_PTR_FORMAT, buffer);
 
-  GstFlowReturn ret_value = GST_FLOW_ERROR;
+  GstFlowReturn ret_value = GST_FLOW_OK;
   gboolean set_discont = FALSE, first_buffer_processed = FALSE;
   GstClockTime buffer_pts = GST_CLOCK_TIME_NONE;
   GstBuffer *buf;
@@ -998,8 +998,6 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
         GST_BUFFER_FLAG_SET (fake_buffer, GST_BUFFER_FLAG_DISCONT);
         GST_BUFFER_PTS(fake_buffer) = buffer_pts;
         gst_pad_chain (demux->queue_sinkpad, fake_buffer);
-        
-        //GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
         GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
       } else {
         GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
@@ -1030,8 +1028,6 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
                     memcpy (info_map.data, pkt.payload, pkt.len);
                     info_map.size = pkt.len;
                     gst_buffer_unmap(opus_buffer, &info_map);
-                    // GST_BUFFER_PTS(opus_buffer) = 62500 * (pkt.granulepos / 3);
-                    // GST_BUFFER_DURATION(opus_buffer) = 62500 * (960 / 3);
                     GST_DEBUG_OBJECT(demux, "OPUS pkt len: %d", pkt.len);
                     // GST_DEBUG_OBJECT (demux, "OPUS PKT: %c %c %c %c", pkt.payload[0], pkt.payload[1], pkt.payload[2], pkt.payload[3]);
                     ret_value = gst_pad_chain (demux->queue_sinkpad, opus_buffer);
