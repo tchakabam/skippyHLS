@@ -116,7 +116,7 @@ static gboolean skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent
 /* Utility functions */
 static void skippy_hls_demux_append_query_param_to_hls_url (gchar **url, const gchar* query_param_name, const gchar* query_param_value);
 static void http_replace_query_parameter(gchar **url, const gchar* query_param_name, const gchar* query_param_value);
-
+static GstFlowReturn skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer *buffer);
 
 #define skippy_hls_demux_parent_class parent_class
 G_DEFINE_TYPE (SkippyHLSDemux, skippy_hls_demux, GST_TYPE_BIN);
@@ -204,6 +204,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->opus_init_data = g_malloc (129);
   demux->opus_init_data_written = 0;
   demux->opus_0_fragment_cached = FALSE;
+  demux->opus_next_pts = GST_CLOCK_TIME_NONE;
 
   // Thread
   g_cond_init (&demux->wait_cond);
@@ -1013,28 +1014,10 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
 
     // read opus packets from demuxer
     if (demux->dataCodec == OPUS) {
-        if (buffer != NULL) {
-            GstMapInfo in_map;
-            OpusPacket pkt; 
-
-            gst_buffer_map(buf, &in_map, GST_MAP_READ);
-            onDataReceived(demux->oggDemux, in_map.data, in_map.size);
-
-            if (readPage(demux->oggDemux)) {
-                while(readPacket(demux->oggDemux, &pkt)) {
-                    GstMapInfo info_map;
-                    GstBuffer *opus_buffer = gst_buffer_new_and_alloc(pkt.len);
-                    gst_buffer_map (opus_buffer, &info_map, GST_MAP_READWRITE);
-                    memcpy (info_map.data, pkt.payload, pkt.len);
-                    info_map.size = pkt.len;
-                    gst_buffer_unmap(opus_buffer, &info_map);
-                    GST_DEBUG_OBJECT(demux, "OPUS pkt len: %d", pkt.len);
-                    // GST_DEBUG_OBJECT (demux, "OPUS PKT: %c %c %c %c", pkt.payload[0], pkt.payload[1], pkt.payload[2], pkt.payload[3]);
-                    ret_value = gst_pad_chain (demux->queue_sinkpad, opus_buffer);
-                }
-            }   
-            gst_buffer_unmap(buf, &in_map);
-        }
+      ret_value = skippy_hls_demux_read_ogg_and_push_opus_packets(demux, buf);
+    } else {
+      // codec is mp3.
+      ret_value = gst_pad_chain (demux->queue_sinkpad, buf);
     }
 
     switch(ret_value) {
@@ -1378,7 +1361,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
     }
     GST_OBJECT_UNLOCK (demux);
     
-
     GST_INFO_OBJECT (demux, "Pushing data for next fragment: %s (Byte-Range=%" G_GINT64_FORMAT " - %" G_GINT64_FORMAT ")",
       fragment->uri, fragment->range_start, fragment->range_end);
     // Tell downloader to push data
@@ -1550,6 +1532,50 @@ static void http_replace_query_parameter(gchar **url, const gchar* query_param_n
   g_strfreev (parameters);
   g_strfreev (uri_parts);
   g_free (new_param);
+}
+
+GstFlowReturn
+skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer *buf)
+{
+  GstMapInfo in_map;
+  OpusPacket pkt;
+  gboolean first_opus_buffer_processed = FALSE;
+  GstFlowReturn ret_value = GST_FLOW_OK;
+  
+  gst_buffer_map(buf, &in_map, GST_MAP_READ);
+  onDataReceived(demux->oggDemux, in_map.data, in_map.size);
+  
+  if (readPage(demux->oggDemux)) {
+    while(readPacket(demux->oggDemux, &pkt)) {
+      GstMapInfo info_map;
+      GstBuffer *opus_buffer = gst_buffer_new_and_alloc(pkt.len);
+      gst_buffer_map (opus_buffer, &info_map, GST_MAP_READWRITE);
+      memcpy (info_map.data, pkt.payload, pkt.len);
+      info_map.size = pkt.len;
+      gst_buffer_unmap(opus_buffer, &info_map);
+      //GST_DEBUG_OBJECT(demux, "OPUS pkt len: %d", pkt.len);
+      // GST_DEBUG_OBJECT (demux, "OPUS PKT: %c %c %c %c", pkt.payload[0], pkt.payload[1], pkt.payload[2], pkt.payload[3]);
+      if (!first_opus_buffer_processed) {
+        first_opus_buffer_processed  = TRUE;
+        if (demux->opus_next_pts != GST_CLOCK_TIME_NONE) {
+          GST_BUFFER_PTS(opus_buffer) = demux->opus_next_pts;
+          demux->opus_next_pts = GST_CLOCK_TIME_NONE;
+        } else {
+          GST_BUFFER_PTS(opus_buffer) = GST_BUFFER_PTS(buf);
+        }
+      } else {
+        GST_BUFFER_PTS(opus_buffer) = GST_CLOCK_TIME_NONE;
+      }
+      GST_BUFFER_FLAG_UNSET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
+      ret_value = gst_pad_chain (demux->queue_sinkpad, opus_buffer);
+    }
+  } else {
+    if (GST_BUFFER_PTS(buf) != GST_CLOCK_TIME_NONE) {
+      demux->opus_next_pts = GST_BUFFER_PTS(buf);
+    }
+  }
+  gst_buffer_unmap(buf, &in_map);
+  return ret_value;
 }
 
 
