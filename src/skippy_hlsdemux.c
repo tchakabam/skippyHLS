@@ -1584,12 +1584,12 @@ skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer
             // if some ogg pages are skipped set the buffer pts to last page
             // granule position
             opus_buffer_pts = (demux->last_page_pos_ms)*1000000;
-            GST_BUFFER_PTS (opus_buffer) = opus_buffer_pts;
           } else {
             // if no pages are skipped use demux->position since it holds pts for
             // begging of the segment.
             opus_buffer_pts = demux->position;
           }
+          GST_BUFFER_PTS (opus_buffer) = opus_buffer_pts;
           demux->opus_next_pts = GST_CLOCK_TIME_NONE;
         } else {
           // the pts is expected to be GST_CLOCK_TIME_NONE (continuous data)
