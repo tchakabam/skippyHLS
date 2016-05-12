@@ -30,6 +30,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
 #include "skippy_hlsdemux.h"
 #include "skippyHLS/skippy_hls.h"
@@ -205,6 +206,8 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->opus_init_data_written = 0;
   demux->opus_0_fragment_cached = FALSE;
   demux->opus_next_pts = GST_CLOCK_TIME_NONE;
+  demux->last_seeking_position = GST_CLOCK_TIME_NONE;
+  demux->last_page_pos_ms = 0;
 
   // Thread
   g_cond_init (&demux->wait_cond);
@@ -845,7 +848,12 @@ skippy_hls_demux_handle_seek (SkippyHLSDemux *demux, GstEvent * event)
   gst_segment_do_seek (&demux->segment, rate, format, flags, start_type, start, stop_type, stop, NULL);
 
   demux->need_segment = TRUE;
+  demux->last_seeking_position = start;
   
+ // flushDecoder (demux->oggDemux);
+  destroyOggDecoder (demux->oggDemux);
+  demux->oggDemux = createOggDecoder();
+  demux->last_page_pos_ms = 0;
   //demux->opus_init_data_written = 0;
 
   // Restart the streaming task
@@ -1538,14 +1546,29 @@ GstFlowReturn
 skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer *buf)
 {
   GstMapInfo in_map;
-  OpusPacket pkt;
+  OpusPacket pkt, empty_pkt;
   gboolean first_opus_buffer_processed = FALSE;
   GstFlowReturn ret_value = GST_FLOW_OK;
   
   gst_buffer_map(buf, &in_map, GST_MAP_READ);
   onDataReceived(demux->oggDemux, in_map.data, in_map.size);
   
-  if (readPage(demux->oggDemux)) {
+  int page_cnt = 0;
+  while (readPage(demux->oggDemux)) {
+    GST_TRACE ("Reading ogg page %d.", ++page_cnt);
+    int64_t granCount = 0;
+    int cnt = 0;
+    double page_pos_ms = getCurrentPageGranule(demux->oggDemux) / 48.;
+    if (demux->last_seeking_position != GST_CLOCK_TIME_NONE &&
+        (page_pos_ms  <= demux->last_seeking_position/1000000.)) {
+      // After seeking discard all pages with granule pos less or equal
+      // to seeking position. Discarding is done by reading packet from
+      // bitstream and doing nothing. TODO: maybe seek could be used
+      GST_TRACE ("Skipping page.");
+      while(readPacket(demux->oggDemux, &empty_pkt)){}
+      demux->last_page_pos_ms = page_pos_ms;
+      continue;
+    }
     while(readPacket(demux->oggDemux, &pkt)) {
       GstMapInfo info_map;
       GstBuffer *opus_buffer = gst_buffer_new_and_alloc(pkt.len);
@@ -1553,27 +1576,42 @@ skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer
       memcpy (info_map.data, pkt.payload, pkt.len);
       info_map.size = pkt.len;
       gst_buffer_unmap(opus_buffer, &info_map);
-      //GST_DEBUG_OBJECT(demux, "OPUS pkt len: %d", pkt.len);
-      // GST_DEBUG_OBJECT (demux, "OPUS PKT: %c %c %c %c", pkt.payload[0], pkt.payload[1], pkt.payload[2], pkt.payload[3]);
       if (!first_opus_buffer_processed) {
         first_opus_buffer_processed  = TRUE;
         if (demux->opus_next_pts != GST_CLOCK_TIME_NONE) {
-          GST_BUFFER_PTS(opus_buffer) = demux->opus_next_pts;
+          GstClockTime opus_buffer_pts;
+          if (demux->last_page_pos_ms != 0) {
+            // if some ogg pages are skipped set the buffer pts to last page
+            // granule position
+            opus_buffer_pts = (demux->last_page_pos_ms)*1000000;
+            GST_BUFFER_PTS (opus_buffer) = opus_buffer_pts;
+          } else {
+            // if no pages are skipped use demux->position since it holds pts for
+            // begging of the segment.
+            opus_buffer_pts = demux->position;
+          }
           demux->opus_next_pts = GST_CLOCK_TIME_NONE;
         } else {
+          // the pts is expected to be GST_CLOCK_TIME_NONE (continuous data)
           GST_BUFFER_PTS(opus_buffer) = GST_BUFFER_PTS(buf);
         }
       } else {
+        // after processing the first buffer all others are
+        // expected to be continuous, thus setting pts to GST_CLOCK_TIME_NONE
         GST_BUFFER_PTS(opus_buffer) = GST_CLOCK_TIME_NONE;
       }
       GST_BUFFER_FLAG_UNSET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
       ret_value = gst_pad_chain (demux->queue_sinkpad, opus_buffer);
     }
-  } else {
-    if (GST_BUFFER_PTS(buf) != GST_CLOCK_TIME_NONE) {
-      demux->opus_next_pts = GST_BUFFER_PTS(buf);
-    }
+    demux->last_page_pos_ms = page_pos_ms;
   }
+  // if we have not pushed opus  buffer after seeking
+  // preserve the pts to indicate that we need to set pts
+  // on the first buffer after seeking.
+  if (GST_BUFFER_PTS(buf) != GST_CLOCK_TIME_NONE) {
+    demux->opus_next_pts = GST_BUFFER_PTS(buf);
+  }
+  
   gst_buffer_unmap(buf, &in_map);
   return ret_value;
 }
