@@ -54,10 +54,10 @@ struct OggDecoder::Impl {
     int64_t lastSeekingPosition;
 
     Impl() : lastSeekingPosition(-1) {
-        assert(ogg_sync_init(&state) == 0);
+      ogg_sync_init(&state);
     }
     ~Impl() {
-        assert(ogg_sync_clear(&state) == 0);
+      ogg_sync_clear(&state);
     }
 
     bool read_complete_page() {

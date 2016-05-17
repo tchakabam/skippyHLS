@@ -266,6 +266,11 @@ skippy_hls_demux_dispose (GObject * obj)
     g_free (demux->opus_init_data);
     demux->opus_init_data = NULL;
   }
+  
+  if (demux->out_adapter) {
+    g_object_unref (demux->out_adapter);
+    demux->out_adapter = NULL;
+  }
 
   GST_DEBUG ("Done cleaning up.");
 }
@@ -876,7 +881,7 @@ skippy_hls_demux_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
   GstFormat fmt;
   gint64 stop = -1;
   GstClockTime duration;
-  gchar* uri;
+  gchar* uri = NULL;
 
   GST_TRACE ("Got %" GST_PTR_FORMAT, query);
 
@@ -963,7 +968,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   GstFlowReturn ret_value = GST_FLOW_OK;
   gboolean set_discont = FALSE, first_buffer_processed = FALSE;
   GstClockTime buffer_pts = GST_CLOCK_TIME_NONE;
-  GstBuffer *buf;
+  GstBuffer *buf = NULL;
   gsize avail_out_size = 0;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
 
@@ -1023,6 +1028,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
     // read opus packets from demuxer
     if (demux->dataCodec == OPUS) {
       ret_value = skippy_hls_demux_read_ogg_and_push_opus_packets(demux, buf);
+      gst_buffer_unref (buf);
     } else {
       // codec is mp3.
       ret_value = gst_pad_chain (demux->queue_sinkpad, buf);
@@ -1046,8 +1052,7 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
 
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
   GstCaps *caps;
-  static GstStaticCaps opus_caps = GST_STATIC_CAPS ("audio/ogg");
-  static GstStaticCaps opus_caps2 = GST_STATIC_CAPS ("audio/x-opus");
+  static GstStaticCaps ogg_static_caps = GST_STATIC_CAPS ("audio/ogg");
   switch (event->type) {
   case GST_EVENT_CAPS:
     GST_OBJECT_LOCK (demux);
@@ -1055,12 +1060,10 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
       gst_caps_unref (demux->caps);
     }
     gst_event_parse_caps (event, &caps);
-    demux->caps = gst_caps_copy (caps);
-    
-    if (gst_caps_can_intersect (gst_static_caps_get (&opus_caps), demux->caps)) {
+    GstCaps *ogg_caps = gst_static_caps_get (&ogg_static_caps);
+    if (gst_caps_can_intersect (ogg_caps, caps)) {
       demux->dataCodec = OPUS;
-      gst_caps_unref (demux->caps);
-      demux->caps = gst_caps_ref(gst_caps_new_simple ("audio/x-opus", NULL));
+      demux->caps = gst_caps_new_simple ("audio/x-opus", NULL);
     } else {
       demux->dataCodec = MP3;
       demux->caps = gst_caps_copy (caps);
@@ -1551,6 +1554,7 @@ skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer
   GstFlowReturn ret_value = GST_FLOW_OK;
   
   gst_buffer_map(buf, &in_map, GST_MAP_READ);
+
   onDataReceived(demux->oggDemux, in_map.data, in_map.size);
   
   int page_cnt = 0;
