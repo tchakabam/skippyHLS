@@ -228,7 +228,10 @@ skippy_hls_demux_dispose (GObject * obj)
   skippy_hls_demux_reset (demux);
   skippy_hls_demux_stop (demux);
 
-  G_OBJECT_CLASS (parent_class)->dispose (obj);
+  if (demux->out_adapter) {
+    g_object_unref (demux->out_adapter);
+    demux->out_adapter = NULL;
+  }
 
   if (demux->oggDemux) {
     destroyOggDecoder(demux->oggDemux);
@@ -273,6 +276,8 @@ skippy_hls_demux_dispose (GObject * obj)
   }
 
   GST_DEBUG ("Done cleaning up.");
+
+  G_OBJECT_CLASS (parent_class)->dispose (obj);
 }
 
 static void
