@@ -320,7 +320,7 @@ skippy_hls_demux_reset (SkippyHLSDemux * demux)
     g_object_set (demux->download_queue,
       "max-size-buffers", 0,
       "max-size-bytes", 0,
-      "max-size-time", 0,
+      "max-size-time", G_GUINT64_CONSTANT (0),
       "use-buffering", FALSE,
     NULL);
     GST_OBJECT_LOCK (demux);
