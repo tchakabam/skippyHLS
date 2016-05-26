@@ -26,6 +26,7 @@
 
 #include <gst/gst.h>
 #include <gst/base/gstadapter.h>
+#include "oggOpusDec.h"
 
 #include "skippy_m3u8.h"
 #include "skippy_uridownloader.h"
@@ -84,6 +85,8 @@ struct _SkippyHLSDemux
   SkippyM3U8Client *client;     /* M3U8 client */
 
 
+  COggDecoder oggDemux;
+  
   /* Streaming task */
   GstTask *stream_task;
   GRecMutex stream_lock;
@@ -93,6 +96,7 @@ struct _SkippyHLSDemux
   GstClockTime download_ahead;
   GstClockTime position;
   GstClockTime position_downloaded;
+  GstClockTime last_seeking_position;
   gint download_failed_count;
   gint download_forbidden_count;
   gboolean continuing;
@@ -103,6 +107,8 @@ struct _SkippyHLSDemux
   gchar* opus_init_data;
   guint16 opus_init_data_written;
   gboolean opus_0_fragment_cached;
+  GstClockTime opus_next_pts;
+  int64_t last_page_pos_ms;
 };
 
 struct _SkippyHLSDemuxClass
