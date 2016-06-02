@@ -1068,7 +1068,7 @@ skippy_hls_demux_proxy_pad_event (GstPad *pad, GstObject *parent, GstEvent *even
     GstCaps *ogg_caps = gst_static_caps_get (&ogg_static_caps);
     if (gst_caps_can_intersect (ogg_caps, caps)) {
       demux->dataCodec = OPUS;
-      demux->caps = gst_caps_new_simple ("audio/x-opus", NULL);
+      demux->caps = gst_caps_from_string ("audio/x-opus, channel-mapping-family=0");
     } else {
       demux->dataCodec = MP3;
       demux->caps = gst_caps_copy (caps);
