@@ -44,7 +44,7 @@ public:
   }
   
   ~OggStream() {
-    int ret = ogg_stream_clear(&mState);
+    ogg_stream_clear(&mState);
   }
 };
 

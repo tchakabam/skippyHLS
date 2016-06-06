@@ -1462,7 +1462,6 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       // Go to next fragment
       skippy_m3u8_client_advance_to_next_fragment (demux->client);
     }
-    opus_need_head = FALSE;
     GST_OBJECT_UNLOCK (demux);
     break;
   }
