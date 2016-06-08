@@ -344,9 +344,9 @@ skippy_hls_demux_pause (SkippyHLSDemux * demux)
 {
   GST_DEBUG ("Pausing task ...");
   // Pause the task
+  GST_OBJECT_LOCK (demux);
   gst_task_pause (demux->stream_task);
   // Signal the thread in case it's waiting
-  GST_OBJECT_LOCK (demux);
   demux->continuing = TRUE;
   demux->download_failed_count = 0;
   GST_TASK_SIGNAL (demux->stream_task);
@@ -399,6 +399,7 @@ static GstStateChangeReturn
 skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
 {
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
+  GstStateChangeReturn ret;
 
   GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
@@ -415,6 +416,13 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       break;
+    default:
+      break;
+  }
+  
+  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+  
+  switch (transition) {
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     // Interrupt streaming thread
@@ -429,7 +437,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
   }
 
-  return GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+  return ret;
 }
 
 static void
@@ -635,8 +643,11 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
   skippy_uri_downloader_prepare (demux->playlist_downloader, uri);
 
   skippy_hls_demux_link_pads (demux);
-
-  gst_task_start (demux->stream_task);
+  GST_OBJECT_LOCK (demux);
+  GstTaskState state;
+  if ((state = gst_task_get_state (demux->stream_task)) != GST_TASK_PAUSED)
+    gst_task_start (demux->stream_task);
+  GST_OBJECT_UNLOCK (demux);
   GST_LOG ("Task started");
 
 error:
