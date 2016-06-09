@@ -1024,11 +1024,7 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
       first_buffer_processed = TRUE;
       // set proper discont flag and time stamp if needed for the first buffer
       if (set_discont) {
-        GstBuffer *fake_buffer = gst_buffer_new();
-        GST_BUFFER_FLAG_SET (fake_buffer, GST_BUFFER_FLAG_DISCONT);
-        GST_BUFFER_PTS(fake_buffer) = buffer_pts;
-        gst_pad_chain (demux->queue_sinkpad, fake_buffer);
-        GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
+        GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
       } else {
         GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
       }
@@ -1610,16 +1606,28 @@ skippy_hls_demux_read_ogg_and_push_opus_packets(SkippyHLSDemux *demux, GstBuffer
           }
           GST_BUFFER_PTS (opus_buffer) = opus_buffer_pts;
           demux->opus_next_pts = GST_CLOCK_TIME_NONE;
+          // if new pts is != 0, it means this is the first buffer to be pushed
+          // after seek command. Set discont flag for it.
+          if (opus_buffer_pts != 0)
+            GST_BUFFER_FLAG_SET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
+          else
+            // for the very first buffer we are unsetting discont flag
+            // in order to avoid discarding by decoder.
+            GST_BUFFER_FLAG_UNSET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
+              
         } else {
           // the pts is expected to be GST_CLOCK_TIME_NONE (continuous data)
           GST_BUFFER_PTS(opus_buffer) = GST_BUFFER_PTS(buf);
+          GST_BUFFER_IS_DISCONT (buf) ?
+            GST_BUFFER_FLAG_SET (opus_buffer, GST_BUFFER_FLAG_DISCONT) :
+            GST_BUFFER_FLAG_UNSET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
         }
       } else {
         // after processing the first buffer all others are
         // expected to be continuous, thus setting pts to GST_CLOCK_TIME_NONE
         GST_BUFFER_PTS(opus_buffer) = GST_CLOCK_TIME_NONE;
+        GST_BUFFER_FLAG_UNSET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
       }
-      GST_BUFFER_FLAG_UNSET (opus_buffer, GST_BUFFER_FLAG_DISCONT);
       ret_value = gst_pad_chain (demux->queue_sinkpad, opus_buffer);
     }
     demux->last_page_pos_ms = page_pos_ms;
