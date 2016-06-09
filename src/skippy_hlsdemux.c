@@ -399,7 +399,6 @@ static GstStateChangeReturn
 skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
 {
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (element);
-  GstStateChangeReturn ret;
 
   GST_DEBUG ("Performing transition: %s -> %s", gst_element_state_get_name (GST_STATE_TRANSITION_CURRENT(transition)),
     gst_element_state_get_name (GST_STATE_TRANSITION_NEXT(transition)));
@@ -416,13 +415,6 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       break;
-    default:
-      break;
-  }
-  
-  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
-  
-  switch (transition) {
     case GST_STATE_CHANGE_PLAYING_TO_PAUSED:
       break;
     // Interrupt streaming thread
@@ -437,7 +429,7 @@ skippy_hls_demux_change_state (GstElement * element, GstStateChange transition)
       break;
   }
 
-  return ret;
+  return GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
 }
 
 static void
