@@ -976,11 +976,18 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   GstBuffer *buf = NULL;
   gsize avail_out_size = 0;
   SkippyHLSDemux *demux = SKIPPY_HLS_DEMUX (gst_pad_get_element_private (pad));
+  
+  if (!buffer) {
+    GST_WARNING ("Error: chain function invoked with NULL buffer!");
+    g_warn_if_reached ();
+    return ret_value;
+  }
 
   GST_OBJECT_LOCK (demux);
   if (G_UNLIKELY(demux->need_segment)) {
     buffer_pts = demux->position;
     if (!demux->need_stream_start) {
+      GST_DEBUG_OBJECT (demux, "Seek performed, buffer %p has discontinuity.", buffer);
       set_discont = TRUE;
     }
   } else {
@@ -1009,10 +1016,16 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
   
   while ((avail_out_size = gst_adapter_available(demux->out_adapter))) {
     buf = gst_adapter_take_buffer(demux->out_adapter, avail_out_size > 4096 ? 4096 : avail_out_size);
+    if (!buf) {
+      GST_WARNING ("Error: no data available in adapter!");
+      g_warn_if_reached ();
+      return ret_value;
+    }
     if (G_UNLIKELY(!first_buffer_processed)) {
       first_buffer_processed = TRUE;
       // set proper discont flag and time stamp if needed for the first buffer
       if (set_discont) {
+        GST_DEBUG_OBJECT (demux, "Setting discontinuity on newly created buffer after seek");
         GstBuffer *fake_buffer = gst_buffer_new();
         GST_BUFFER_FLAG_SET (fake_buffer, GST_BUFFER_FLAG_DISCONT);
         GST_BUFFER_PTS(fake_buffer) = buffer_pts;
@@ -1038,14 +1051,14 @@ skippy_hls_demux_proxy_pad_chain (GstPad *pad, GstObject *parent, GstBuffer *buf
       // codec is mp3.
       ret_value = gst_pad_chain (demux->queue_sinkpad, buf);
     }
-
-    switch(ret_value) {
-    case GST_FLOW_OK:
-      GST_LOG ("Proxy pad was %s while invoking queue chain function", gst_flow_get_name (ret_value));
-    default:
-      break;
+    
+    if (ret_value != GST_FLOW_OK) {
+      GST_WARNING ("Proxy pad was %s while invoking queue chain function", gst_flow_get_name (ret_value));
     }
-
+  }
+  if (!first_buffer_processed) {
+    GST_WARNING ("Error: no data has been processed. Most likely no bytes are available in adapter!");
+    g_warn_if_reached ();
   }
   return ret_value;
 }
