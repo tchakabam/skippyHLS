@@ -1264,9 +1264,13 @@ skippy_hls_check_buffer_ahead (SkippyHLSDemux * demux)
   // If we branch here this means we might want to wait
   pos = skippy_hls_demux_query_position (demux);
   max_buffer_duration = demux->download_ahead;
+  
 
-  GST_DEBUG ("Playback position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT ", Queued position is %" GST_TIME_FORMAT,
-    GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position_downloaded));
+  guint current_level_bytes = 0;
+  g_object_get (demux->download_queue, "current-level-bytes", &current_level_bytes, NULL);
+  GST_DEBUG ("Playback position is %" GST_TIME_FORMAT " , Max buffer duration is %" GST_TIME_FORMAT ", Queued position is %" GST_TIME_FORMAT
+    ", Download queue level (bytes) is %u", GST_TIME_ARGS (pos), GST_TIME_ARGS(max_buffer_duration), GST_TIME_ARGS (demux->position_downloaded),
+             current_level_bytes);
 
   // Check for wether we should limit downloading
   if (pos != GST_CLOCK_TIME_NONE && max_buffer_duration != GST_CLOCK_TIME_NONE
