@@ -107,7 +107,7 @@ struct _SkippyHLSDemux
   gchar* opus_init_data;
   guint16 opus_init_data_written;
   gboolean opus_0_fragment_cached;
-  GstClockTime opus_next_pts;
+  gboolean opus_seek_processing_pending;
   int64_t last_page_pos_ms;
 };
 
