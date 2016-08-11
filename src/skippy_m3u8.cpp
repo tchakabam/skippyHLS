@@ -6,6 +6,7 @@
 #include "skippy_fragment.h"
 
 #include "skippy_m3u8_parser.hpp"
+#include "skippy_m3u8_playlist.hpp"
 #include "skippyHLS/skippy_hls.h"
 #include "skippy_hls_priv.h"
 
@@ -16,13 +17,13 @@ GST_DEBUG_CATEGORY_STATIC (skippy_m3u8_debug);
 #define NANOSECONDS_TO_GST_TIME(t) ((GstClockTime)t*GST_NSECOND)
 
 using namespace std;
+using namespace parser;
 
 struct SkippyM3U8ClientPrivate
 {
   SkippyM3U8ClientPrivate ()
   :current_index(0)
   ,playlist_raw(NULL)
-  ,playlist("")
   {
 
   }
@@ -34,7 +35,7 @@ struct SkippyM3U8ClientPrivate
 
   int current_index;
   gchar* playlist_raw;
-  SkippyM3UPlaylist playlist;
+  M3UPlaylist playlist;
   recursive_mutex mutex;
 };
 
@@ -92,7 +93,7 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
 SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer)
 {
-  SkippyM3UParser p;
+  M3U8 parser;
   gchar* playlist = buf_to_utf8_playlist (playlist_buffer);
     
   if (!playlist) {
@@ -101,7 +102,8 @@ SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * clie
   {
     lock_guard<recursive_mutex> lock(client->priv->mutex);
     string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
-    SkippyM3UPlaylist loaded_playlist = p.parse(loaded_playlist_uri, playlist);
+    M3UPlaylist loaded_playlist;
+    parser.parse(loaded_playlist_uri, playlist, loaded_playlist);
     
     //update raw playlist
     g_free (client->priv->playlist_raw);
@@ -126,39 +128,33 @@ SkippyFragment* skippy_m3u8_client_get_fragment (SkippyM3U8Client * client, guin
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
-  SkippyFragment *fragment;
-  SkippyM3UItem item;
-
-  if (sequence_number >= client->priv->playlist.items.size()) {
+  if (sequence_number >= client->priv->playlist.size()) {
     return NULL;
   }
 
-  item = client->priv->playlist.items.at (sequence_number);
+  M3UItem item = client->priv->playlist[sequence_number];
 
-  fragment = skippy_fragment_new (item.url.c_str());
-  fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
-  fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
-  fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
+  SkippyFragment *fragment = skippy_fragment_new (item.url.c_str());
+  fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start.count());
+  fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end.count());
+  fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration.count());
   return fragment;
 }
 
 SkippyFragment* skippy_m3u8_client_get_current_fragment (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  
-  SkippyFragment *fragment;
-  SkippyM3UItem item;
-  
-  if (client->priv->current_index >= client->priv->playlist.items.size()) {
+    
+  if (client->priv->current_index >= client->priv->playlist.size()) {
     return NULL;
   }
   
-  item = client->priv->playlist.items.at (client->priv->current_index);
+  M3UItem item = client->priv->playlist[client->priv->current_index];
   
-  fragment = skippy_fragment_new (item.url.c_str());
-  fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start);
-  fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end);
-  fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration);
+  SkippyFragment *fragment = skippy_fragment_new (item.url.c_str());
+  fragment->start_time = NANOSECONDS_TO_GST_TIME (item.start.count());
+  fragment->stop_time = NANOSECONDS_TO_GST_TIME (item.end.count());
+  fragment->duration = NANOSECONDS_TO_GST_TIME (item.duration.count());
   return fragment;
 }
 
@@ -166,7 +162,7 @@ void skippy_m3u8_client_advance_to_next_fragment (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
-  if (client->priv->current_index < client->priv->playlist.items.size()) {
+  if (client->priv->current_index < client->priv->playlist.size()) {
     client->priv->current_index++;
   }
 }
@@ -175,21 +171,15 @@ gboolean skippy_m3u8_client_seek_to (SkippyM3U8Client * client, GstClockTime tar
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
 
-  SkippyM3UItem item;
   guint64 target_pos = (guint64) GST_TIME_AS_NSECONDS(target);
-
-  GST_LOG ("Seek to target: %" GST_TIME_FORMAT " ns", GST_TIME_ARGS(GST_NSECOND * target_pos));
-
-  for (int i=0;i<client->priv->playlist.items.size();i++) {
-    item = client->priv->playlist.items.at(i);
-    if (target_pos >= item.start && target_pos < item.end)
-    {
-      GST_LOG ("Seeked to index %d, interval %ld - %ld", i, (long) item.start, (long) item.end);
-      client->priv->current_index = i;
-      return TRUE;
-    }
+  if (target_pos > client->priv->playlist.totalDuration.count()) {
+    return FALSE;
   }
-  return FALSE;
+  
+  GST_LOG ("Seek to target: %" GST_TIME_FORMAT " ns", GST_TIME_ARGS(GST_NSECOND * target_pos));
+  M3UItem item = client->priv->playlist.itemAtTime(std::chrono::nanoseconds(target_pos));
+  client->priv->current_index = item.index;
+  return TRUE;
 }
 
 gchar* skippy_m3u8_client_get_uri(SkippyM3U8Client * client)
@@ -198,39 +188,27 @@ gchar* skippy_m3u8_client_get_uri(SkippyM3U8Client * client)
   return g_strdup(client->priv->playlist.uri.c_str());
 }
 
-gchar* skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate)
-{
-  //lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return NULL;
-}
-
 gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client)
 {
-  lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return g_strdup(client->priv->playlist.uri.c_str());
+  return skippy_m3u8_client_get_uri (client);
 }
 
-void skippy_m3u8_client_set_current_playlist (SkippyM3U8Client * client, const gchar *uri)
+gchar* skippy_m3u8_client_get_key_uri(SkippyM3U8Client * client)
 {
-  //lock_guard<recursive_mutex> lock(client->priv->mutex);
+  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  return g_strdup(client->priv->playlist.keyUri.c_str());
 }
 
 GstClockTime skippy_m3u8_client_get_total_duration (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return NANOSECONDS_TO_GST_TIME (client->priv->playlist.totalDuration);
+  return NANOSECONDS_TO_GST_TIME (client->priv->playlist.totalDuration.count());
 }
 
 GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client)
 {
   lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return NANOSECONDS_TO_GST_TIME (client->priv->playlist.targetDuration);
-}
-
-gboolean skippy_m3u8_client_has_variant_playlist(SkippyM3U8Client * client)
-{
-  //lock_guard<recursive_mutex> lock(client->priv->mutex);
-  return FALSE;
+  return NANOSECONDS_TO_GST_TIME (client->priv->playlist.targetDuration.count());
 }
 
 gboolean skippy_m3u8_client_is_live(SkippyM3U8Client * client)
