@@ -183,7 +183,10 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   demux->queue_sinkpad = gst_element_get_static_pad (demux->download_queue, "sink");
   demux->downloader = skippy_uri_downloader_new (TRUE);
   demux->playlist_downloader = skippy_uri_downloader_new (FALSE);
-
+  
+  // TODO: find a generic way for specifying encrypter/decrypter
+  demux->decrypter = gst_element_factory_make ("skippyencrypter", NULL);
+  
   demux->queue_proxy_pad = gst_pad_new ("skippyhlsdemux-queue-proxy-pad", GST_PAD_SINK);
   gst_pad_set_element_private (demux->queue_proxy_pad, demux);
   gst_pad_set_chain_function (demux->queue_proxy_pad, skippy_hls_demux_proxy_pad_chain);
@@ -193,6 +196,7 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
   gst_bin_add (GST_BIN (demux), demux->download_queue);
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->downloader));
   gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->playlist_downloader));
+  gst_bin_add (GST_BIN (demux), GST_ELEMENT(demux->decrypter));
 
   demux->need_segment = TRUE;
   demux->need_stream_start = TRUE;
@@ -695,18 +699,21 @@ void skippy_hls_demux_update_downstream_events (SkippyHLSDemux *demux, gboolean 
 static void
 skippy_hls_demux_link_pads (SkippyHLSDemux * demux)
 {
-  GstPad *downloader_srcpad, *queue_srcpad, *srcpad;
+  GstPad *decrypter_srcpad, *queue_srcpad, *srcpad;
   GstPadTemplate* templ;
 
   GST_DEBUG ("Linking pads...");
 
-  // Link downloader -> floating sink pad
-  downloader_srcpad = gst_element_get_static_pad (GST_ELEMENT(demux->downloader), "src");
-  if (gst_pad_link (downloader_srcpad, demux->queue_proxy_pad) != GST_PAD_LINK_OK) {
+  // Link downloader -> decrypter
+  gst_element_link (demux->downloader, demux->decrypter);
+  // Link decrypter -> floating sink pad
+  g_object_set (demux->decrypter, "passthrough", TRUE, "decrypt", TRUE,  NULL);
+  decrypter_srcpad = gst_element_get_static_pad (GST_ELEMENT(demux->decrypter), "src");
+  if (gst_pad_link (decrypter_srcpad, demux->queue_proxy_pad) != GST_PAD_LINK_OK) {
     // In case this ever happens: This will abort the process in test conditions
     g_critical ("Error while linking downloader src pad to floating sink pad");
   }
-  gst_object_unref (downloader_srcpad);
+  gst_object_unref (decrypter_srcpad);
 
   // Set our srcpad
   queue_srcpad = gst_element_get_static_pad (demux->download_queue, "src");
