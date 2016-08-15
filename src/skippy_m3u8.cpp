@@ -1,6 +1,7 @@
 #include <string>
 #include <mutex>
 #include <string.h> // for memcpy
+#include <algorithm>
 
 #include "skippy_m3u8.h"
 #include "skippy_fragment.h"
@@ -25,7 +26,7 @@ struct SkippyM3U8ClientPrivate
   :current_index(0)
   ,playlist_raw(NULL)
   {
-
+    std::fill_n(key, 16, 0);
   }
 
   ~SkippyM3U8ClientPrivate ()
@@ -36,6 +37,7 @@ struct SkippyM3U8ClientPrivate
   int current_index;
   gchar* playlist_raw;
   M3UPlaylist playlist;
+  char key[16];
   recursive_mutex mutex;
 };
 
@@ -90,6 +92,18 @@ static gchar* buf_to_utf8_playlist (GstBuffer * buf)
   return playlist;
 }
 
+void skippy_m3u8_client_set_key(SkippyM3U8Client * client, const gchar *key, gsize len) 
+{
+    std::string key(key, len);
+    GST_LOG ("Setting key. len: %d / key: %s", len, s.c_str());
+    std::copy_n(key, len, client->priv->key);
+}
+
+GBytes* skippy_m3u8_client_get_key(SkippyM3U8Client * client) 
+{
+    return g_bytes_new(client->priv->key, 16);
+}
+
 // Update/set/identify variant (sub-) playlist by URIs advertised in master playlist
 SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * client, const gchar *uri, GstBuffer* playlist_buffer)
 {
@@ -99,23 +113,22 @@ SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * clie
   if (!playlist) {
     return PLAYLIST_INVALID_UTF_CONTENT;
   }
-  {
-    lock_guard<recursive_mutex> lock(client->priv->mutex);
-    string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
-    M3UPlaylist loaded_playlist;
-    parser.parse(loaded_playlist_uri, playlist, loaded_playlist);
+  
+  lock_guard<recursive_mutex> lock(client->priv->mutex);
+  string loaded_playlist_uri = (uri != NULL) ? uri : client->priv->playlist.uri;
+  M3UPlaylist loaded_playlist;
+  parser.parse(loaded_playlist_uri, playlist, loaded_playlist);
     
-    //update raw playlist
-    g_free (client->priv->playlist_raw);
-    client->priv->playlist_raw = playlist;
+  //update raw playlist
+  g_free (client->priv->playlist_raw);
+  client->priv->playlist_raw = playlist;
     
-    if (!loaded_playlist.isComplete) {
-      return PLAYLIST_INCOMPLETE;
-    }
-    
-    client->priv->playlist = loaded_playlist;
-    return NO_ERROR;
+  if (!loaded_playlist.isComplete) {
+    return PLAYLIST_INCOMPLETE;
   }
+    
+  client->priv->playlist = loaded_playlist;
+  return NO_ERROR;
 }
 
 gchar* skippy_m3u8_client_get_current_raw_data (SkippyM3U8Client * client) {

@@ -761,6 +761,102 @@ skippy_uri_downloader_handle_failure (SkippyUriDownloader * downloader, GError *
   return SKIPPY_URI_DOWNLOADER_FAILED;
 }
 
+// Fetch a key from a url synchronously. Blocks until key has been fetched or an error occurs.
+//
+// @param keyContent[OUT] the function allocates a new string for the key content. Ownership is passed to the caller
+// @returns Downloader status code
+// @notes MT-safe
+SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_key (SkippyUriDownloader * downloader, 
+    const gchar *url, GstBuffer** keyContent, const gchar * referer, gboolean compress, GError ** err)
+{
+  GstStateChangeReturn ret;
+
+  g_return_val_if_fail (downloader, SKIPPY_URI_DOWNLOADER_FAILED);
+  g_return_val_if_fail (*err == NULL, SKIPPY_URI_DOWNLOADER_FAILED);
+
+  // Let's first make sure we are completely reset, but pass in the current fragment
+  // to eventually prepare to resume a previous broken download ...
+  skippy_uri_downloader_reset (downloader, fragment);
+
+  // Aquire download lock
+  g_mutex_lock (&downloader->priv->download_lock);
+
+  // Make sure we have our data source component set up and wired
+  if (!skippy_uri_downloader_create_src (downloader, url)) {
+    g_mutex_unlock (&downloader->priv->download_lock);
+    return SKIPPY_URI_DOWNLOADER_FAILED;
+  }
+
+  // Setup URL & range
+  const gboolean refresh = FALSE:
+  const gboolean allow_cache = FALSE;
+  if (! (skippy_uri_downloader_set_uri (downloader, url, referer, compress, refresh, allow_cache)
+    && skippy_uri_downloader_set_range (downloader, 0, -1))) {
+    GST_WARNING_OBJECT (downloader, "Failed to set URL or byte-range on data source");
+    g_mutex_unlock (&downloader->priv->download_lock);
+    return skippy_uri_downloader_handle_failure (downloader, err);
+  }
+
+  // Let data flow ...
+  ret = gst_element_set_state (downloader->priv->urisrc, GST_STATE_PLAYING);
+  GST_TRACE ("Setting URI data source to PLAYING: %s", gst_element_state_change_return_get_name (ret));
+  if (ret == GST_STATE_CHANGE_FAILURE) {
+    g_mutex_unlock (&downloader->priv->download_lock);
+    GST_ERROR ("Failed setting URI src to PLAYING state");
+    return skippy_uri_downloader_handle_failure (downloader, err);
+  }
+
+  // From here we expect the streaming thread to call into our event & sync message handlers.
+  // This means we have to protect any shared data between our cond wait block and these handlers.
+  GST_TRACE_OBJECT (downloader, "Waiting to fetch the URI %s", url);
+  // We protect the downloaded fragment metadata we share with the 'cancel' function using the object lock here.
+  GST_OBJECT_LOCK (downloader);
+  /* wait until:
+   *   - the download succeed (EOS in the src pad)
+   *   - the download failed (Error message on the fetcher bus)
+   */
+  while (!(fragment->cancelled || fragment->completed || downloader->priv->download_canceled)) {
+  //while (!downloader->priv->download_done)
+    // Indicate we are downloading
+    downloader->priv->fetching = TRUE;
+    g_cond_wait (&downloader->priv->cond, GST_OBJECT_GET_LOCK (downloader));
+    GST_DEBUG ("Condition has been signalled");
+  }
+
+  gboolean is_canceled = downloader->priv->download_canceled;
+
+  if (downloader->priv->download_canceled) {
+    downloader->priv->download_canceled = FALSE;
+  }
+
+  downloader->priv->fetching = FALSE;
+
+  GST_OBJECT_UNLOCK (downloader);
+
+  // Now we disconnect everything from the data source
+  skippy_uri_downloader_deinit_uri_src  (downloader);
+  // After this we are sure the streaming thread of the data source will not push any more data or events
+  // and all messages from the URI src element are flushed (in sync with this call)
+
+  // Handle errors (even when completed data)
+  if (downloader->priv->err) {
+    g_mutex_unlock (&downloader->priv->download_lock);
+    return skippy_uri_downloader_handle_failure (downloader, err);
+  }
+
+  // Cancellation (this is when we have been intendendly cancelled)
+  if (fragment->cancelled || is_canceled) {
+    g_mutex_unlock (&downloader->priv->download_lock);
+    return SKIPPY_URI_DOWNLOADER_CANCELLED;
+  }
+
+  // Successful completion
+  g_mutex_unlock (&downloader->priv->download_lock);
+  *keyContent = skippy_uri_downloader_get_buffer(downloader);
+
+  return SKIPPY_URI_DOWNLOADER_COMPLETED;    
+} // end fetch_key
+
 // Fetch function: can not be called concurrently with setters&getters or prepare function
 // Blocks until download is finished
 //

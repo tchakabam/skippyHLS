@@ -575,6 +575,29 @@ skippy_hls_demux_update_duration (SkippyHLSDemux * demux)
   gst_element_post_message (GST_ELEMENT (demux), gst_message_new_duration_changed (GST_OBJECT (demux)));
 }
 
+static void
+skippy_hls_demux_load_key(SkippyHLSDemux* demux, const gchar *key_uri)
+{
+  GstBuffer *key_content = NULL;
+  gchar *current_playlist = skippy_m3u8_client_get_current_playlist (demux->client);
+  GError key_err;
+  SkippyUriDownloaderFetchReturn key_dl_ret = skippy_uri_downloader_fetch_key(demux->playlist_downloader, 
+                                                                              key_uri, 
+                                                                              &key_content, 
+                                                                              current_playlist, 
+                                                                              FALSE, 
+                                                                              &key_err);
+  if (key_dl_ret == SKIPPY_URI_DOWNLOADER_COMPLETED) {
+    GstMapInfo info;
+    gst_buffer_map(key_content, &info, GST_MAP_READ);
+    skippy_m3u8_client_set_key(demux->client, info.data, info.size);
+    g_object_set (encrypt, "key", skippy_m3u8_client_get_key(demux->client));
+    gst_buffer_unmap(key_content, &info);
+    gst_buffer_unref (key_content);
+  }
+
+}
+
 // This is called by the URL source (sinkpad) event handler on EOS to handle the initial playlist data
 //
 // MT-safe
@@ -623,6 +646,14 @@ skippy_hls_demux_handle_first_playlist (SkippyHLSDemux* demux)
       goto error;
       break;
   }
+
+  gchar *key_uri = skippy_m3u8_client_get_key_uri(demux->client);
+  if (key_uri) {
+    skippy_hls_demux_load_key(demux, key_uri);
+    g_free(key_uri);
+  }
+
+  g_free(current_playlist);
 
   GST_OBJECT_UNLOCK (demux);
 

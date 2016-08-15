@@ -101,6 +101,8 @@ namespace parser {
             istringstream(tok[1]) >> playlist.sequenceNo;
         }
         
+        // #EXT-X-KEY:METHOD=AES-128,URI="https://priv.example.com/key.php?r=52", IV=0x9c7db8778570d05c3177c349fd9236aa
+        //                                                                           \__________ 128bit IV ____________/
         void onKey(const string &line, istringstream &stream, M3UPlaylist &playlist) {
             Tokens tok = split(line, ':', 1);               // #EXT-X-KEY  :   METHOD=AES-128,URI="http://..."
             Tokens tagValue = split(tok[1], ',', 1);        // METHOD=AES-128   ,   URI="http://..."

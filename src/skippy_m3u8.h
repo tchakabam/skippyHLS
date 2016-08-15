@@ -54,6 +54,8 @@ SkippyHlsInternalError skippy_m3u8_client_load_playlist (SkippyM3U8Client * clie
 gchar *skippy_m3u8_client_get_playlist_for_bitrate (SkippyM3U8Client * client, guint bitrate);
 gchar *skippy_m3u8_client_get_current_playlist (SkippyM3U8Client * client);
 gchar* skippy_m3u8_client_get_key_uri(SkippyM3U8Client * client);
+void skippy_m3u8_client_set_key(SkippyM3U8Client * client, const gchar *key, gsize len);
+GBytes* skippy_m3u8_client_get_key(SkippyM3U8Client * client);
 
 GstClockTime skippy_m3u8_client_get_total_duration (SkippyM3U8Client * client);
 GstClockTime skippy_m3u8_client_get_target_duration (SkippyM3U8Client * client);

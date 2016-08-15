@@ -71,8 +71,13 @@ GType skippy_uri_downloader_get_type (void);
 SkippyUriDownloader * skippy_uri_downloader_new (gboolean resume_interrupted_downloads);
 
 void skippy_uri_downloader_prepare (SkippyUriDownloader * downloader, gchar* uri);
+
+SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_key (SkippyUriDownloader * downloader, 
+    const gchar *url, GstBuffer** keyContent, const gchar * referer, gboolean compress, GError ** err);
+
 SkippyUriDownloaderFetchReturn skippy_uri_downloader_fetch_fragment (SkippyUriDownloader * downloader, SkippyFragment* fragment,
 	const gchar * referer, gboolean compress, gboolean refresh, gboolean allow_cache, GError ** err);
+
 GstBuffer* skippy_uri_downloader_get_buffer (SkippyUriDownloader *downloader);
 
 void skippy_uri_downloader_interrupt (SkippyUriDownloader * downloader);
