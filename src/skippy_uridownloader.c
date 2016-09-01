@@ -674,8 +674,12 @@ skippy_uri_downloader_set_uri (SkippyUriDownloader * downloader, const gchar * u
   GST_TRACE ("URI has been applied to handler interface, configuring data source now");
 
   // Configure source element accordingly
-  if (g_object_class_find_property (klass, "compress"))
-    g_object_set (downloader->priv->urisrc, "compress", compress, NULL);
+  
+  //https://soundcloud.atlassian.net/browse/SKIP-504 - always use compression (do not set
+  //it - default is using compression.
+  // if (g_object_class_find_property (klass, "compress"))
+    //g_object_set (downloader->priv->urisrc, "compress", compress, NULL);
+  
   if (g_object_class_find_property (klass, "keep-alive"))
     g_object_set (downloader->priv->urisrc, "keep-alive", TRUE, NULL);
   if (g_object_class_find_property (klass, "extra-headers")) {
