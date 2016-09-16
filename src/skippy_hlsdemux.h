@@ -83,6 +83,7 @@ struct _SkippyHLSDemux
   SkippyUriDownloader *downloader;
   SkippyUriDownloader *playlist_downloader;
   SkippyM3U8Client *client;     /* M3U8 client */
+  GRand *rand_gen;
 
 
   COggDecoder oggDemux;
