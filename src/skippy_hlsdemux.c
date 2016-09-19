@@ -38,8 +38,7 @@
 #include "glib.h"
 
 #define RETRY_TIME_BASE (500*GST_MSECOND)
-#define RETRY_THRESHOLD 6 // when we switch from constant to exponential backoff retrial
-#define RETRY_MAX_TIME_UNTIL (60*GST_SECOND)
+#define RETRY_MAX_TIME_UNTIL (45*GST_SECOND)
 
 // Must be doubles above zero
 #define BUFFER_WATERMARK_HIGH_RATIO 0.5
@@ -47,6 +46,8 @@
 
 #define DEFAULT_BUFFER_DURATION (30*GST_SECOND)
 #define MIN_BUFFER_DURATION (10*GST_SECOND)
+
+#define MAX_FAILED_COUNT 20
 
 #define OPUS_FORMAT_PARAM "hls_opus_64_url"
 #define MP3_FORMAT_PARAM "hls_mp3_128_url"
@@ -174,9 +175,10 @@ skippy_hls_demux_init (SkippyHLSDemux * demux)
 
   // Member objects
   demux->client = skippy_m3u8_client_new ();
-  demux->playlist = NULL; // Storage for initial playlist
+  demux->playlist = NULL;                 // Storage for initial playlist
   demux->caps = NULL;
   demux->oggDemux = createOggDecoder();
+  demux->rand_gen = g_rand_new();         //  Random number generator (seed taken from /dev/urandom or current ts)
 
   // Internal elements
   demux->download_queue = gst_element_factory_make ("queue2", "skippyhlsdemux-download-queue");
@@ -273,6 +275,11 @@ skippy_hls_demux_dispose (GObject * obj)
   if (demux->out_adapter) {
     g_object_unref (demux->out_adapter);
     demux->out_adapter = NULL;
+  }
+  
+  if (demux->rand_gen) {
+    g_rand_free (demux->rand_gen);
+    demux->rand_gen = NULL;
   }
 
   GST_DEBUG ("Done cleaning up.");
@@ -1196,20 +1203,8 @@ skippy_hls_demux_refresh_playlist (SkippyHLSDemux * demux)
 static GstClockTime
 skippy_hls_demux_get_time_until_retry_locked (SkippyHLSDemux * demux)
 {
-  double power;
-  double retry_timer = RETRY_TIME_BASE;
-
-  if (demux->download_failed_count >= RETRY_THRESHOLD) {
-    //
-    // Use this JavaScript function in a console to test the series of ouputs with a 500 ms basetime or to tune the setting here
-    // backoff = function(fails, threshold) { if (fails >= threshold) { return 500 * Math.exp (fails/6) / Math.E } else { return 500; } }
-    // Below is the same algorithm
-    power = ((double) demux->download_failed_count) / ((double) RETRY_THRESHOLD);
-    retry_timer = RETRY_TIME_BASE * (exp ( power ) / M_E);
-    // Cap the value
-    if (retry_timer > RETRY_MAX_TIME_UNTIL) {retry_timer = RETRY_MAX_TIME_UNTIL;}
-  }
-
+  double retry_timer = RETRY_TIME_BASE + RETRY_MAX_TIME_UNTIL / (1 + pow(M_E, -0.8 * (demux->download_failed_count - 8)));
+  retry_timer = g_rand_double_range (demux->rand_gen, 0, retry_timer);
   return (GstClockTime) retry_timer;
 }
 
@@ -1337,7 +1332,8 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   SkippyUriDownloaderFetchReturn fetch_ret = SKIPPY_URI_DOWNLOADER_VOID;
   GError *err = NULL;
   gchar* referrer_uri = NULL;
-  gboolean playlist_refresh = FALSE;
+  gboolean playlist_outdated = FALSE;
+  gboolean media_segment_fatal_error = FALSE;
   gboolean opus_need_head  = FALSE;
   GstClockTime time_until_retry;
 
@@ -1445,8 +1441,18 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       gst_task_pause (demux->stream_task);
       goto end_stream_loop;
     }
-    // We only want to refetch the playlist if we get a 403 or a 404
-    if (g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED)) {
+    guint buffered_bytes = 0;
+    g_object_get (demux->download_queue, "current-level-bytes", &buffered_bytes, NULL);
+      
+    if (demux->download_failed_count > MAX_FAILED_COUNT && buffered_bytes == 0) {
+      GST_ELEMENT_ERROR (demux, SKIPPY_HLS, MEDIA_LOADING_FAILED, ("Can not load media segments, possible connectivity problem."), (NULL));
+      gst_task_pause (demux->stream_task);
+      goto end_stream_loop;
+    }
+    
+    media_segment_fatal_error = !g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_AUTHORIZED);
+    // We only want to refetch the playlist if we get a 403
+    if (!media_segment_fatal_error) {
       GST_OBJECT_LOCK (demux);
       demux->download_forbidden_count++;
       GST_OBJECT_UNLOCK (demux);
@@ -1461,8 +1467,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
           fragment->uri, (int) demux->download_forbidden_count, err->message),
         ("\n\n%s\n\n", skippy_m3u8_client_get_current_raw_data (demux->client)));
       }
-      skippy_hls_demux_refresh_playlist (demux);
-      playlist_refresh = TRUE;
+      playlist_outdated = !skippy_hls_demux_refresh_playlist (demux);
     }
     break;
   case SKIPPY_URI_DOWNLOADER_COMPLETED:
@@ -1487,7 +1492,7 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
   GST_TRACE_OBJECT (demux, "Exiting task now ...");
 
   // Handle error
-  if (err && !playlist_refresh) {
+  if (playlist_outdated || media_segment_fatal_error) {
     GST_OBJECT_LOCK (demux);
     time_until_retry = skippy_hls_demux_get_time_until_retry_locked (demux);
     GST_DEBUG ("Next retry scheduled in: %" GST_TIME_FORMAT, GST_TIME_ARGS (time_until_retry));
