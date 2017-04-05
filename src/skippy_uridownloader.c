@@ -451,13 +451,20 @@ skippy_uri_downloader_handle_warning (SkippyUriDownloader *downloader,
 {
   GError *err = NULL;
   gchar *dbg_info = NULL;
-
+  
   gst_message_parse_warning (message, &err, &dbg_info);
   GST_WARNING_OBJECT (downloader,
       "Downloader warning: %s from %s",
       GST_OBJECT_NAME (message->src), err->message);
   GST_DEBUG ("Debugging info: %s\n", (dbg_info) ? dbg_info : "none");
-  g_error_free (err);
+  if (message && err && err->message &&
+      g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND) &&
+      g_str_has_prefix(err->message, "Not Found")) {
+    GST_WARNING ("Resource not found! Preserving the error.");
+    skippy_uri_downloader_handle_error (downloader, err);
+  } else {
+    g_error_free (err);
+  }
   g_free (dbg_info);
 }
 
@@ -476,10 +483,9 @@ static void skippy_uri_downloader_handle_message (GstBin * bin, GstMessage * mes
     gst_message_unref (message);
 
   } else if (GST_MESSAGE_TYPE (message) == GST_MESSAGE_WARNING) {
-
     skippy_uri_downloader_handle_warning (downloader, message);
     gst_message_unref (message);
-
+    
   } else {
     // Handle any other message (mostly state-changed notifications)
     GST_BIN_CLASS (skippy_uri_downloader_parent_class)->handle_message (bin, message);
