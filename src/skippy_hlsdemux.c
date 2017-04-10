@@ -1441,6 +1441,15 @@ skippy_hls_demux_stream_loop (SkippyHLSDemux * demux)
       gst_task_pause (demux->stream_task);
       goto end_stream_loop;
     }
+    // Handle 404 by reporting warning - do not signal error, use warning instead to be able to use the pipeline
+    if (err && err->message &&
+        g_error_matches (err, GST_RESOURCE_ERROR, GST_RESOURCE_ERROR_NOT_FOUND) &&
+        g_str_has_prefix(err->message, "Not Found"))
+    {
+      GST_ELEMENT_WARNING (demux, RESOURCE, NOT_FOUND, ("Not Found"), ("Not Found"));
+      gst_task_pause (demux->stream_task);
+      goto end_stream_loop;
+    }
     guint buffered_bytes = 0;
     g_object_get (demux->download_queue, "current-level-bytes", &buffered_bytes, NULL);
       
